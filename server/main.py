@@ -1,0 +1,206 @@
+"""
+ADK Streaming Server — FastAPI WebSocket bridge for the Chrome Extension.
+
+Architecture:
+  Chrome Extension (offscreen.js)
+      ↕ WebSocket (ws://localhost:8080/ws)
+  FastAPI Server (this file)
+      ↕ ADK runner.run_live()
+  Gemini Live API
+
+Upstream (extension → Gemini):
+  - Binary messages → audio PCM chunks → LiveRequestQueue.send_realtime()
+  - JSON messages   → screenshots      → LiveRequestQueue.send_realtime()
+
+Downstream (Gemini → extension):
+  - ADK Events with inline audio data → JSON {"type":"audio","data":"<b64>"}
+  - Interruption events               → JSON {"type":"interrupted"}
+  - Turn complete events               → JSON {"type":"turn_complete"}
+"""
+
+import asyncio
+import base64
+import json
+import os
+import uuid
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from google.adk.agents.live_request_queue import LiveRequestQueue
+from google.adk.agents.run_config import RunConfig, StreamingMode
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai import types
+
+from app.agent import root_agent
+
+# ════════════════════════════════════════
+# Phase 1: Application Initialization
+# ════════════════════════════════════════
+
+load_dotenv()
+
+APP_NAME = "autopilot-bridge"
+app = FastAPI(title="Autopilot Bridge ADK Server")
+
+session_service = InMemorySessionService()
+
+runner = Runner(
+    app_name=APP_NAME,
+    agent=root_agent,
+    session_service=session_service,
+)
+
+
+# ════════════════════════════════════════
+# WebSocket Endpoint
+# ════════════════════════════════════════
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket) -> None:
+    await websocket.accept()
+    print("Chrome Extension Connected!")
+
+    # Generate unique IDs for this session
+    user_id = f"user-{uuid.uuid4().hex[:8]}"
+    session_id = f"session-{uuid.uuid4().hex[:8]}"
+
+    # ════════════════════════════════════════
+    # Phase 2: Session Initialization
+    # ════════════════════════════════════════
+
+    run_config = RunConfig(
+        streaming_mode=StreamingMode.BIDI,
+        response_modalities=["AUDIO"],
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
+    )
+
+    # Create session
+    await session_service.create_session(
+        app_name=APP_NAME,
+        user_id=user_id,
+        session_id=session_id,
+    )
+
+    # Create LiveRequestQueue — the bridge between WebSocket and ADK
+    live_request_queue = LiveRequestQueue()
+
+    print(f"ADK session created: {session_id}")
+
+    # ════════════════════════════════════════
+    # Phase 3: Bidi-streaming
+    # ════════════════════════════════════════
+
+    async def upstream_task() -> None:
+        """Receives audio/screenshot from WebSocket → sends to ADK LiveRequestQueue."""
+        chunk_count = 0
+        try:
+            while True:
+                message = await websocket.receive()
+
+                if message.get("type") == "websocket.disconnect":
+                    break
+
+                # Binary data = audio PCM chunk
+                if "bytes" in message and message["bytes"]:
+                    raw_bytes = message["bytes"]
+                    chunk_count += 1
+                    if chunk_count % 50 == 1:
+                        print(f"🎤 Audio chunk #{chunk_count} ({len(raw_bytes)} bytes)")
+
+                    audio_blob = types.Blob(
+                        mime_type="audio/pcm;rate=16000",
+                        data=raw_bytes,
+                    )
+                    live_request_queue.send_realtime(audio_blob)
+
+                # Text data = JSON (screenshot or other commands)
+                elif "text" in message and message["text"]:
+                    data = json.loads(message["text"])
+
+                    if data.get("type") == "screenshot":
+                        b64_data = data["data"].split(",")[1]
+                        image_bytes = base64.b64decode(b64_data)
+
+                        image_blob = types.Blob(
+                            mime_type="image/jpeg",
+                            data=image_bytes,
+                        )
+                        live_request_queue.send_realtime(image_blob)
+
+                        # Also send a text prompt to process the screenshot
+                        content = types.Content(
+                            parts=[types.Part(text="What is this?")]
+                        )
+                        live_request_queue.send_content(content)
+
+        except WebSocketDisconnect:
+            print("Extension disconnected.")
+        except Exception as e:
+            print(f"Upstream error: {e}")
+
+    async def downstream_task() -> None:
+        """Receives ADK Events from run_live() → sends to WebSocket."""
+        try:
+            async for event in runner.run_live(
+                user_id=user_id,
+                session_id=session_id,
+                live_request_queue=live_request_queue,
+                run_config=run_config,
+            ):
+                # Extract audio data from the event and send to extension
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.inline_data and part.inline_data.data:
+                            audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
+                            await websocket.send_text(
+                                json.dumps({"type": "audio", "data": audio_b64})
+                            )
+
+                # Handle interruption (barge-in)
+                if event.interrupted:
+                    print("⚡ Gemini was interrupted (barge-in)")
+                    await websocket.send_text(
+                        json.dumps({"type": "interrupted"})
+                    )
+
+                # Handle turn complete
+                if event.turn_complete:
+                    print("Gemini turn complete, listening...")
+                    await websocket.send_text(
+                        json.dumps({"type": "turn_complete"})
+                    )
+
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            print(f"Downstream error: {e}")
+
+    # Run both tasks concurrently
+    try:
+        await asyncio.gather(
+            upstream_task(),
+            downstream_task(),
+            return_exceptions=True,
+        )
+    finally:
+        # ════════════════════════════════════════
+        # Phase 4: Session Termination
+        # ════════════════════════════════════════
+        live_request_queue.close()
+        print(f"Session {session_id} closed.")
+
+
+# ════════════════════════════════════════
+# Health check
+# ════════════════════════════════════════
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "agent": root_agent.name}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="localhost", port=8080, reload=True)
