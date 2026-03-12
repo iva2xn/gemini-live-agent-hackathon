@@ -13,6 +13,16 @@ chrome.runtime.onMessage.addListener((message) => {
             ws.send(JSON.stringify({ type: 'screenshot', data: message.payload }));
         }
     }
+    // ── Action result from content script (via background) → send to server ──
+    else if (message.action === 'OFFSCREEN_ACTION_RESULT') {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'action_result',
+                actionId: message.actionId,
+                result: message.result,
+            }));
+        }
+    }
 });
 
 async function startRecording() {
@@ -71,6 +81,16 @@ async function startRecording() {
             }
             else if (message.type === 'turn_complete') {
                 console.log("✅ Gemini turn complete, listening...");
+            }
+            // ── Server is requesting a browser action ──
+            else if (message.type === 'action') {
+                console.log(`🔧 Action requested: ${message.action_type}`, message);
+                chrome.runtime.sendMessage({
+                    action: 'RELAY_ACTION',
+                    actionId: message.actionId,
+                    actionType: message.action_type,
+                    params: message.params || {},
+                });
             }
         }
     };

@@ -33,6 +33,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from app.agent import root_agent
+from app.tools import clear_websocket, resolve_action, set_websocket
 
 # ════════════════════════════════════════
 # Phase 1: Application Initialization
@@ -60,6 +61,9 @@ runner = Runner(
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
     print("Chrome Extension Connected!")
+
+    # Register WebSocket so tool functions can send actions to the extension
+    set_websocket(websocket)
 
     # Generate unique IDs for this session
     user_id = f"user-{uuid.uuid4().hex[:8]}"
@@ -106,8 +110,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if "bytes" in message and message["bytes"]:
                     raw_bytes = message["bytes"]
                     chunk_count += 1
-                    if chunk_count % 50 == 1:
-                        print(f"🎤 Audio chunk #{chunk_count} ({len(raw_bytes)} bytes)")
+                    if chunk_count % 500 == 1:
+                        print(f"🎤 Receiving audio... ({chunk_count} chunks)")
 
                     audio_blob = types.Blob(
                         mime_type="audio/pcm;rate=16000",
@@ -115,7 +119,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     )
                     live_request_queue.send_realtime(audio_blob)
 
-                # Text data = JSON (screenshot or other commands)
+                # Text data = JSON (screenshot, action results, etc.)
                 elif "text" in message and message["text"]:
                     data = json.loads(message["text"])
 
@@ -134,6 +138,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             parts=[types.Part(text="What is this?")]
                         )
                         live_request_queue.send_content(content)
+
+                    elif data.get("type") == "action_result":
+                        # Extension completed a tool action — resolve the pending future
+                        action_id = data.get("actionId")
+                        result = data.get("result", {})
+                        if action_id:
+                            resolve_action(action_id, result)
+                            print(f"✅ Action {action_id} resolved: {result.get('success')}")
 
         except WebSocketDisconnect:
             print("Extension disconnected.")
@@ -173,9 +185,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     )
 
         except WebSocketDisconnect:
-            pass
+            print("Extension disconnected (downstream).")
         except Exception as e:
-            print(f"Downstream error: {e}")
+            print(f"⚠️ Downstream error: {e}")
+            # Try to notify the extension so it doesn't hang
+            try:
+                await websocket.send_text(
+                    json.dumps({"type": "turn_complete"})
+                )
+            except Exception:
+                pass
 
     # Run both tasks concurrently
     try:
@@ -188,6 +207,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         # ════════════════════════════════════════
         # Phase 4: Session Termination
         # ════════════════════════════════════════
+        clear_websocket()
         live_request_queue.close()
         print(f"Session {session_id} closed.")
 
