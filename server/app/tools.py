@@ -25,6 +25,62 @@ _session_state = {
     "pending_actions": {},  # action_id → asyncio.Future
 }
 
+# ════════════════════════════════════════
+# Audio Gate — prevents 1008 crash during tool execution
+# ════════════════════════════════════════
+# When Gemini calls a tool, it stops accepting sendRealtimeInput (audio).
+# If audio is sent during this window, the API returns 1008 and kills the session.
+# The gate tells upstream_task to buffer audio instead of sending it.
+# After the tool completes, we wait briefly for ADK to send the tool response,
+# then flush the buffer so Gemini gets all the audio with minimal delay.
+
+_audio_gate = {
+    "paused": False,
+    "buffer": [],      # List of (mime_type, data) tuples to replay
+    "queue": None,     # Reference to LiveRequestQueue, set by main.py
+}
+
+_TOOL_RESPONSE_GRACE = 0.15  # seconds to wait after tool returns for ADK to send tool_response
+
+
+def set_live_queue(queue):
+    """Register the LiveRequestQueue so we can flush buffered audio."""
+    _audio_gate["queue"] = queue
+
+
+def is_audio_paused():
+    """Check if audio should be buffered (tool in progress)."""
+    return _audio_gate["paused"]
+
+
+def buffer_audio_blob(blob):
+    """Buffer an audio blob during tool execution."""
+    _audio_gate["buffer"].append(blob)
+
+
+def _pause_audio():
+    """Pause realtime audio sending (called when tool starts)."""
+    _audio_gate["paused"] = True
+    print("⏸️  Audio gate CLOSED (tool in progress)")
+
+
+async def _resume_audio():
+    """Resume audio and flush buffer (called after tool completes)."""
+    # Wait for ADK to finish sending the tool_response to Gemini
+    await asyncio.sleep(_TOOL_RESPONSE_GRACE)
+
+    queue = _audio_gate["queue"]
+    buffered = _audio_gate["buffer"]
+    if queue and buffered:
+        print(f"▶️  Audio gate OPEN — flushing {len(buffered)} buffered chunks")
+        for blob in buffered:
+            queue.send_realtime(blob)
+    else:
+        print("▶️  Audio gate OPEN — no buffered audio")
+
+    _audio_gate["buffer"] = []
+    _audio_gate["paused"] = False
+
 
 def set_websocket(ws):
     """Register the active WebSocket (called when extension connects)."""
@@ -56,10 +112,11 @@ def resolve_action(action_id: str, result: dict):
 # Internal helper
 # ════════════════════════════════════════
 
-_ACTION_TIMEOUT = 5.0  # seconds — fail fast to avoid hanging the session
+_ACTION_TIMEOUT = 15.0  # seconds — allow pages to load and tools to complete
 
 async def _send_action(action_type: str, params: dict | None = None) -> dict:
-    """Send an action to the extension and wait for the result."""
+    """Send an action to the extension and wait for the result.
+    """
     try:
         ws = _session_state["websocket"]
         print(f"🔧 Tool action: {action_type} | WebSocket={'connected' if ws else 'NONE'}")

@@ -33,7 +33,12 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from app.agent import root_agent
-from app.tools import clear_websocket, resolve_action, set_websocket
+from app.tools import (
+    clear_websocket,
+    resolve_action,
+    set_live_queue,
+    set_websocket,
+)
 
 # ════════════════════════════════════════
 # Phase 1: Application Initialization
@@ -90,6 +95,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     # Create LiveRequestQueue — the bridge between WebSocket and ADK
     live_request_queue = LiveRequestQueue()
 
+    # Register the queue with tools so the audio gate can flush buffered audio
+    set_live_queue(live_request_queue)
+
     print(f"ADK session created: {session_id}")
 
     # ════════════════════════════════════════
@@ -117,6 +125,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         mime_type="audio/pcm;rate=16000",
                         data=raw_bytes,
                     )
+
+                    # Direct pass-through, no audio gate!
                     live_request_queue.send_realtime(audio_blob)
 
                 # Text data = JSON (screenshot, action results, etc.)
@@ -195,6 +205,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 )
             except Exception:
                 pass
+            # If the session dies, the tasks will finish and the WS will close cleanly.
 
     # Run both tasks concurrently
     try:
@@ -208,6 +219,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         # Phase 4: Session Termination
         # ════════════════════════════════════════
         clear_websocket()
+        set_live_queue(None)
         live_request_queue.close()
         print(f"Session {session_id} closed.")
 

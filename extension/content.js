@@ -4,7 +4,7 @@
 
     let niboIdCounter = 0;
     const NIBO_ATTR = "data-nibo-id";
-    const DOM_REFRESH_DELAY = 600; // ms to wait after an action before re-distilling
+    const DOM_REFRESH_DELAY = 50; // ms to wait after an action before re-distilling
 
     const INTERACTIVE_SELECTORS = [
         "button",
@@ -53,7 +53,58 @@
         text = text.trim();
         if (!text) text = (el.innerText || "").trim();
 
-        return text.substring(0, 80);
+        return text.substring(0, 120);
+    }
+
+    // Find the nearest visible label text for an element (form labels, nearby text)
+    function getNearbyLabel(el) {
+        // 1. Explicit <label for="...">
+        if (el.id) {
+            const label = document.querySelector(`label[for="${el.id}"]`);
+            if (label) return label.textContent.trim().substring(0, 80);
+        }
+        // 2. Wrapping <label>
+        const parentLabel = el.closest("label");
+        if (parentLabel) {
+            let t = "";
+            for (const node of parentLabel.childNodes) {
+                if (node.nodeType === Node.TEXT_NODE) t += node.textContent;
+            }
+            t = t.trim();
+            if (t) return t.substring(0, 80);
+        }
+        // 3. Previous sibling text (common pattern: "Email: [input]")
+        const prev = el.previousElementSibling;
+        if (prev && (prev.tagName === "LABEL" || prev.tagName === "SPAN" || prev.tagName === "P")) {
+            const t = prev.textContent.trim();
+            if (t && t.length < 80) return t;
+        }
+        return "";
+    }
+
+    // Get the nearest section/group context for an element
+    function getSectionContext(el) {
+        // Walk up to find the nearest heading or landmark
+        let node = el.parentElement;
+        let depth = 0;
+        while (node && depth < 8) {
+            // Check for headings inside this container
+            const heading = node.querySelector("h1, h2, h3, h4, [role='heading']");
+            if (heading && heading !== el) {
+                return heading.textContent.trim().substring(0, 60);
+            }
+            // Check for aria-label on container (e.g., <nav aria-label="Main">)
+            const containerLabel = node.getAttribute("aria-label");
+            if (containerLabel) return containerLabel.substring(0, 60);
+            // Check for landmark roles
+            const role = node.getAttribute("role");
+            if (role && ["navigation", "main", "banner", "complementary", "dialog", "search", "form"].includes(role)) {
+                return role;
+            }
+            node = node.parentElement;
+            depth++;
+        }
+        return "";
     }
 
     function distillDOM() {
@@ -93,6 +144,13 @@
             const role = el.getAttribute("role");
             if (role) entry.role = role;
 
+            const title = el.getAttribute("title");
+            if (title) entry.title = title.substring(0, 80);
+
+            // data-testid is excellent for identifying elements programmatically
+            const testId = el.getAttribute("data-testid");
+            if (testId) entry.testId = testId;
+
             if (el.tagName === "A") {
                 const href = el.getAttribute("href");
                 if (href && !href.startsWith("javascript:") && href !== "#") {
@@ -106,12 +164,24 @@
                 el.tagName === "SELECT"
             ) {
                 if (el.value) entry.currentValue = el.value.substring(0, 50);
+
+                // Nearby label gives crucial context for form fields
+                const label = getNearbyLabel(el);
+                if (label) entry.label = label;
             }
 
             if (el.disabled) entry.disabled = true;
             if (el.tagName === "INPUT" && el.type === "checkbox") {
                 entry.checked = el.checked;
             }
+            if (el.tagName === "INPUT" && el.type === "radio") {
+                entry.checked = el.checked;
+                if (el.name) entry.name = el.name;
+            }
+
+            // Section context helps Gemini understand WHERE on the page this element is
+            const section = getSectionContext(el);
+            if (section) entry.section = section;
 
             distilled.push(entry);
         }

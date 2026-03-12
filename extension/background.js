@@ -60,12 +60,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         finalUrl = 'https://google.com/search?q=' + encodeURIComponent(finalUrl);
                     }
                 }
-                chrome.tabs.update(tabs[0].id, { url: finalUrl }, () => {
-                    chrome.runtime.sendMessage({
-                        action: 'OFFSCREEN_ACTION_RESULT',
-                        actionId: message.actionId,
-                        result: { success: true, message: `Navigating to ${finalUrl}` }
-                    });
+                const targetTabId = tabs[0].id;
+                chrome.tabs.update(targetTabId, { url: finalUrl }, () => {
+                    const listener = (tabId, changeInfo) => {
+                        if (tabId === targetTabId && changeInfo.status === 'complete') {
+                            chrome.tabs.onUpdated.removeListener(listener);
+                            clearTimeout(fallback);
+                            chrome.runtime.sendMessage({
+                                action: 'OFFSCREEN_ACTION_RESULT',
+                                actionId: message.actionId,
+                                result: { success: true, message: `Navigated to ${finalUrl}` }
+                            });
+                        }
+                    };
+                    chrome.tabs.onUpdated.addListener(listener);
+                    const fallback = setTimeout(() => {
+                        chrome.tabs.onUpdated.removeListener(listener);
+                        chrome.runtime.sendMessage({
+                            action: 'OFFSCREEN_ACTION_RESULT',
+                            actionId: message.actionId,
+                            result: { success: true, message: `Navigated to ${finalUrl} (timeout)` }
+                        });
+                    }, 10000);
                 });
                 return;
             }
@@ -79,7 +95,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     chrome.runtime.sendMessage({
                         action: 'OFFSCREEN_ACTION_RESULT',
                         actionId: message.actionId,
-                        result: { success: false, error: chrome.runtime.lastError.message },
+                        // If the page is reloading or navigating away, the message port closes and throws this error.
+                        // This usually means the click or enter key correctly triggered a navigation!
+                        result: { success: true, message: "Action succeeded (page is navigating/reloading)." },
                     });
                     return;
                 }

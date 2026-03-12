@@ -2,6 +2,8 @@ let audioContext;
 let mediaStream;
 let ws;
 let nextPlayTime = 0; // Keeps track of the audio queue so chunks play smoothly
+let scheduledSources = []; // Track all scheduled AudioBufferSourceNodes for barge-in
+let outputGain; // GainNode to control Gemini's output volume (mute on barge-in)
 
 chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'OFFSCREEN_START_MIC') {
@@ -26,6 +28,11 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 async function startRecording() {
+    // Prevent overlapping sessions
+    if (ws || audioContext || mediaStream) {
+        stopRecording();
+    }
+
     // Connect to the ADK FastAPI WebSocket server
     ws = new WebSocket('ws://localhost:8080/ws');
 
@@ -75,12 +82,20 @@ async function startRecording() {
                 playAudioChunk(message.data);
             }
             else if (message.type === 'interrupted') {
-                // BARGE-IN: If you interrupt Gemini, we instantly clear the audio queue!
-                console.log("⚡ Barge-in detected, clearing audio queue");
+                // BARGE-IN: Stop all scheduled audio sources immediately!
+                console.log("⚡ Barge-in detected, stopping all queued audio");
+                for (const src of scheduledSources) {
+                    try { src.stop(); } catch (_) { /* already stopped */ }
+                }
+                scheduledSources = [];
                 if (audioContext) nextPlayTime = audioContext.currentTime;
+                // Drop any straggling audio messages from the network buffer for half a second
+                window.ignoreAudioUntil = performance.now() + 500;
             }
             else if (message.type === 'turn_complete') {
                 console.log("✅ Gemini turn complete, listening...");
+                // Clean up finished sources
+                scheduledSources = [];
             }
             // ── Server is requesting a browser action ──
             else if (message.type === 'action') {
@@ -99,6 +114,12 @@ async function startRecording() {
 // Function to decode Gemini's Base64 audio and play it
 async function playAudioChunk(base64Data) {
     if (!audioContext) return;
+    if (window.ignoreAudioUntil && performance.now() < window.ignoreAudioUntil) {
+        return; // Drop straggling chunk from before the interruption
+    }
+    if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+    }
 
     // 1. Decode Base64 string into raw binary bytes
     const binaryString = atob(base64Data);
@@ -118,10 +139,17 @@ async function playAudioChunk(base64Data) {
     const audioBuffer = audioContext.createBuffer(1, float32Array.length, 24000);
     audioBuffer.getChannelData(0).set(float32Array);
 
-    // 4. Schedule playback so it doesn't overlap or stutter
+    // 4. Lazily create output gain node (used for barge-in muting)
+    if (!outputGain || outputGain.context !== audioContext) {
+        outputGain = audioContext.createGain();
+        outputGain.gain.value = 1.0;
+        outputGain.connect(audioContext.destination);
+    }
+
+    // 5. Schedule playback so it doesn't overlap or stutter
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
-    source.connect(audioContext.destination);
+    source.connect(outputGain);
 
     const currentTime = audioContext.currentTime;
     if (nextPlayTime < currentTime) {
@@ -129,11 +157,30 @@ async function playAudioChunk(base64Data) {
     }
 
     source.start(nextPlayTime);
+    scheduledSources.push(source);
+
+    // Auto-remove from tracking when the source finishes playing
+    source.onended = () => {
+        const idx = scheduledSources.indexOf(source);
+        if (idx !== -1) scheduledSources.splice(idx, 1);
+    };
+
     nextPlayTime += audioBuffer.duration; // Queue the next chunk exactly when this one ends
 }
 
 function stopRecording() {
-    if (audioContext) audioContext.close();
-    if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
-    if (ws) ws.close();
+    if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+    }
+    if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+    }
+    if (ws) {
+        ws.close();
+        ws = null;
+    }
+    scheduledSources = [];
+    outputGain = null;
 }
