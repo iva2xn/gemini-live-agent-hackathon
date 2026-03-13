@@ -33,8 +33,8 @@ async function startRecording() {
         stopRecording();
     }
 
-    // Connect to the ADK FastAPI WebSocket server
-    ws = new WebSocket('ws://localhost:8080/ws');
+    // Connect to the ADK FastAPI WebSocket server on Cloud Run
+    ws = new WebSocket('wss://nibo-backend-512400763301.us-central1.run.app/ws');
 
     ws.onopen = async () => {
         console.log("WebSocket connected to ADK Server");

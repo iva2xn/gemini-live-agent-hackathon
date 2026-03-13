@@ -7,7 +7,7 @@ from app.tools import (
 
 root_agent = Agent(
     name="autopilot_agent",
-    model="gemini-2.5-flash-native-audio-latest",
+    model="gemini-live-2.5-flash-native-audio",
     description="An autonomous voice-controlled browser autopilot.",
     instruction="""\
 You are NIBO, a highly responsive voice assistant for browser automation.
