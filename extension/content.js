@@ -252,21 +252,26 @@
         el.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
         el.click();
 
-        // Use native setter so React/Vue pick up the change
-        const setter =
-            Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype,
-                "value"
-            )?.set ||
-            Object.getOwnPropertyDescriptor(
-                window.HTMLTextAreaElement.prototype,
-                "value"
-            )?.set;
-
-        if (setter) {
-            setter.call(el, text);
+        if (el.isContentEditable) {
+            document.execCommand('selectAll', false, null);
+            document.execCommand('insertText', false, text);
         } else {
-            el.value = text;
+            // Use native setter so React/Vue pick up the change
+            const setter =
+                Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype,
+                    "value"
+                )?.set ||
+                Object.getOwnPropertyDescriptor(
+                    window.HTMLTextAreaElement.prototype,
+                    "value"
+                )?.set;
+
+            if (setter) {
+                setter.call(el, text);
+            } else {
+                el.value = text;
+            }
         }
 
         el.dispatchEvent(new Event("input", { bubbles: true }));

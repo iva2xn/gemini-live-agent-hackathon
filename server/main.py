@@ -35,6 +35,7 @@ from google.genai import types
 from app.agent import root_agent
 from app.tools import (
     clear_websocket,
+    is_audio_paused,
     resolve_action,
     set_live_queue,
     set_websocket,
@@ -80,7 +81,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     run_config = RunConfig(
         streaming_mode=StreamingMode.BIDI,
-        response_modalities=["AUDIO"],
+        response_modalities=[types.Modality.AUDIO],
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
     )
@@ -126,8 +127,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         data=raw_bytes,
                     )
 
-                    # Direct pass-through, no audio gate!
-                    live_request_queue.send_realtime(audio_blob)
+                    # Audio gate: DROP audio during tool execution to prevent 1008/1007 crash
+                    if not is_audio_paused():
+                        live_request_queue.send_realtime(audio_blob)
 
                 # Text data = JSON (screenshot, action results, etc.)
                 elif "text" in message and message["text"]:
@@ -141,11 +143,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             mime_type="image/jpeg",
                             data=image_bytes,
                         )
-                        live_request_queue.send_realtime(image_blob)
 
-                        # Also send a text prompt to process the screenshot
+                        # Send a text prompt with the screenshot via send_content
                         content = types.Content(
-                            parts=[types.Part(text="What is this?")]
+                            parts=[
+                                types.Part(text="What is this?"),
+                                types.Part(inline_data=image_blob)
+                            ]
                         )
                         live_request_queue.send_content(content)
 

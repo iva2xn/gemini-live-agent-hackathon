@@ -15,6 +15,12 @@ import asyncio
 import json
 import traceback
 import uuid
+from google import genai
+from google.genai import types
+
+# Global shared conversation memory
+conversation_memory = []
+_active_background_tasks = {}
 
 # ════════════════════════════════════════
 # Shared session state (set by main.py)
@@ -26,59 +32,38 @@ _session_state = {
 }
 
 # ════════════════════════════════════════
-# Audio Gate — prevents 1008 crash during tool execution
+# Audio Gate — prevents 1008/1007 crash during tool execution
 # ════════════════════════════════════════
-# When Gemini calls a tool, it stops accepting sendRealtimeInput (audio).
-# If audio is sent during this window, the API returns 1008 and kills the session.
-# The gate tells upstream_task to buffer audio instead of sending it.
-# After the tool completes, we wait briefly for ADK to send the tool response,
-# then flush the buffer so Gemini gets all the audio with minimal delay.
+# When Gemini calls a tool, it currently rejects sendRealtimeInput (audio)
+# natively in the protocol until the tool response is returned.
 
 _audio_gate = {
     "paused": False,
-    "buffer": [],      # List of (mime_type, data) tuples to replay
     "queue": None,     # Reference to LiveRequestQueue, set by main.py
 }
 
-_TOOL_RESPONSE_GRACE = 0.15  # seconds to wait after tool returns for ADK to send tool_response
+_TOOL_RESPONSE_GRACE = 0.5  # seconds for ADK to finish sending the tool_response
 
 
 def set_live_queue(queue):
-    """Register the LiveRequestQueue so we can flush buffered audio."""
+    """Register the LiveRequestQueue."""
     _audio_gate["queue"] = queue
 
 
 def is_audio_paused():
-    """Check if audio should be buffered (tool in progress)."""
+    """Check if audio should be dropped (tool in progress)."""
     return _audio_gate["paused"]
-
-
-def buffer_audio_blob(blob):
-    """Buffer an audio blob during tool execution."""
-    _audio_gate["buffer"].append(blob)
 
 
 def _pause_audio():
     """Pause realtime audio sending (called when tool starts)."""
     _audio_gate["paused"] = True
-    print("⏸️  Audio gate CLOSED (tool in progress)")
 
 
 async def _resume_audio():
-    """Resume audio and flush buffer (called after tool completes)."""
+    """Resume audio sending (called after tool completes)."""
     # Wait for ADK to finish sending the tool_response to Gemini
     await asyncio.sleep(_TOOL_RESPONSE_GRACE)
-
-    queue = _audio_gate["queue"]
-    buffered = _audio_gate["buffer"]
-    if queue and buffered:
-        print(f"▶️  Audio gate OPEN — flushing {len(buffered)} buffered chunks")
-        for blob in buffered:
-            queue.send_realtime(blob)
-    else:
-        print("▶️  Audio gate OPEN — no buffered audio")
-
-    _audio_gate["buffer"] = []
     _audio_gate["paused"] = False
 
 
@@ -115,8 +100,8 @@ def resolve_action(action_id: str, result: dict):
 _ACTION_TIMEOUT = 15.0  # seconds — allow pages to load and tools to complete
 
 async def _send_action(action_type: str, params: dict | None = None) -> dict:
-    """Send an action to the extension and wait for the result.
-    """
+    """Send an action to the extension and wait for the result."""
+    _pause_audio()
     try:
         ws = _session_state["websocket"]
         print(f"🔧 Tool action: {action_type} | WebSocket={'connected' if ws else 'NONE'}")
@@ -153,6 +138,8 @@ async def _send_action(action_type: str, params: dict | None = None) -> dict:
         print(f"❌ Tool error ({action_type}): {e}")
         traceback.print_exc()
         return {"success": False, "error": f"Tool error: {str(e)}"}
+    finally:
+        await _resume_audio()
 
 
 # ════════════════════════════════════════
@@ -228,3 +215,93 @@ async def navigate_to_url(url: str) -> dict:
         url: Full URL (e.g. "https://google.com") or relative path (e.g. "/settings").
     """
     return await _send_action("navigate", {"url": url})
+
+
+# ════════════════════════════════════════
+# Background Brain (gemini-3.1-flash)
+# ════════════════════════════════════════
+
+async def _run_brain_process(goal: str, task_id: str):
+    """The internal background loop."""
+    print(f"🎬 [Brain {task_id}] Started background goal: {goal}")
+    try:
+        client = genai.Client()
+        brain_tools = [
+            get_page_elements,
+            click_element,
+            type_text,
+            press_key,
+            scroll_page,
+            navigate_to_url,
+        ]
+        
+        system_instruction = f"""\
+You are NIBO Brain, an autonomous background browser agent.
+Your objective is to achieve the user's goal by interacting with the browser.
+Goal: {goal}
+
+Context of previous interactions:
+{conversation_memory}
+
+- You are driving the browser. You have tools to get elements, click, type, navigate, and scroll.
+- You do NOT have a voice. Do NOT try to converse.
+- Your entire existence is a loop of checking the page (get_page_elements) and interacting.
+- If an element is found by ID, use click_element or type_text.
+- Feel perfectly comfortable navigating to direct URLs (e.g. facebook.com, gmail.com/reset) instead of Googling everything.
+- When you consider the goal complete, simply return text summarizing what was accomplished.
+"""
+        
+        chat = client.aio.chats.create(
+            model="gemini-2.5-flash",
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.0,
+                tools=brain_tools,
+            )
+        )
+        
+        # Start the automated tool execution loop inside the google-genai SDK
+        response = await chat.send_message("Please execute the goal now.")
+        
+        result_text = response.text or "Goal executed."
+        print(f"✅ [Brain {task_id}] Finished: {result_text}")
+        conversation_memory.append({"role": "brain", "text": f"Completed: {goal}. Result: {result_text}"})
+    except Exception as e:
+        print(f"❌ [Brain {task_id}] Failed: {e}")
+        traceback.print_exc()
+        conversation_memory.append({"role": "brain", "error": str(e)})
+
+
+async def process_browser_task(goal: str) -> dict:
+    """Execute a complex browser task in the background using a smarter model.
+
+    Call this tool whenever the user asks you to do something in the browser 
+    (e.g., "reset password", "message John", "search for a youtube video", "scroll down"). 
+    You will hand off the goal to the NIBO Brain, which will silently drive the browser.
+
+    Args:
+        goal: The precise details of the user's request.
+    """
+    task_id = uuid.uuid4().hex[:6]
+    conversation_memory.append({"role": "user", "text": goal})
+    
+    # We run the background brain without blocking the voice agent
+    task = asyncio.create_task(_run_brain_process(goal, task_id))
+    _active_background_tasks[task_id] = task
+    
+    return {
+        "success": True, 
+        "message": f"Handoff complete. NIBO Brain is now working on '{goal}' in the background. Tell the user you've started."
+    }
+
+
+async def save_context(info: str) -> dict:
+    """Save important information to the conversation memory for later use.
+    
+    Call this when the user says something important (e.g., their name, details for an email).
+    
+    Args:
+        info: The information to save.
+    """
+    conversation_memory.append({"role": "user_context", "info": info})
+    return {"success": True, "message": "Context saved to global memory."}
