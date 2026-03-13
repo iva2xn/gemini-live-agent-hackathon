@@ -107,6 +107,30 @@
         return "";
     }
 
+    // Helper to generate a unique, stable CSS selector for an element
+    function generateSelector(el) {
+        if (!el || el.nodeType !== 1) return "";
+        let path = [];
+        while (el && el.nodeType === 1 && el.tagName.toLowerCase() !== "html") {
+            let selector = el.tagName.toLowerCase();
+            if (el.id && !el.id.startsWith("nibo-")) {
+                selector += `#${el.id}`;
+                path.unshift(selector);
+                break; // IDs are usually unique enough to stop
+            } else {
+                let sib = el, nth = 1;
+                while (sib = sib.previousElementSibling) {
+                    if (sib.tagName.toLowerCase() == selector) nth++;
+                }
+                if (nth != 1) selector += `:nth-of-type(${nth})`;
+            }
+            path.unshift(selector);
+            el = el.parentNode;
+        }
+        return path.join(" > ");
+    }
+
+    // Distill the page down to just the interactive elements that Gemini needs to see
     function distillDOM() {
         // Clear old tags
         document.querySelectorAll(`[${NIBO_ATTR}]`).forEach((el) => {
@@ -127,7 +151,7 @@
             const niboId = `nibo-${niboIdCounter}`;
             el.setAttribute(NIBO_ATTR, niboId);
 
-            const entry = { id: niboId, tag: el.tagName };
+            const entry = { id: niboId, tag: el.tagName, selector: generateSelector(el) };
 
             const text = getElementText(el);
             if (text) entry.text = text;
@@ -252,12 +276,9 @@
         el.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
         el.click();
 
-        if (el.isContentEditable) {
-            document.execCommand('selectAll', false, null);
-            document.execCommand('insertText', false, text);
-        } else {
-            // Use native setter so React/Vue pick up the change
-            const setter =
+        // Clear existing value if it's an input/textarea
+        if (!el.isContentEditable) {
+             const setter =
                 Object.getOwnPropertyDescriptor(
                     window.HTMLInputElement.prototype,
                     "value"
@@ -268,13 +289,54 @@
                 )?.set;
 
             if (setter) {
-                setter.call(el, text);
+                setter.call(el, "");
             } else {
-                el.value = text;
+                el.value = "";
             }
+             el.dispatchEvent(new Event("input", { bubbles: true }));
         }
 
-        el.dispatchEvent(new Event("input", { bubbles: true }));
+        // Dispatch key events for each character to trigger React/Rich text editor state
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            const keyCode = char.charCodeAt(0);
+            
+            const keydownEvent = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: char, code: char, keyCode: keyCode });
+            el.dispatchEvent(keydownEvent);
+
+            const keypressEvent = new KeyboardEvent("keypress", { bubbles: true, cancelable: true, key: char, code: char, keyCode: keyCode });
+            el.dispatchEvent(keypressEvent);
+
+            if (el.isContentEditable) {
+                // For rich text editors (slate, draft, lexical, etc), we must try insertText
+                // or just rely on the framework responding to the key events.
+                // It's usually safer to use execCommand for raw contenteditables.
+                // We'll append the character using string manipulation if execCommand fails
+                if (!document.execCommand('insertText', false, char)) {
+                   // Fallback for some editors or if execCommand is unsupported
+                   el.innerHTML += char;
+                }
+            } else {
+                // Add character to standard input/textarea value
+                const setter =
+                    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set ||
+                    Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+
+                if (setter) {
+                    setter.call(el, el.value + char);
+                } else {
+                    el.value += char;
+                }
+            }
+
+            const inputEvent = new InputEvent("input", { data: char, inputType: "insertText", bubbles: true, cancelable: true });
+            el.dispatchEvent(inputEvent);
+
+            const keyupEvent = new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: char, code: char, keyCode: keyCode });
+            el.dispatchEvent(keyupEvent);
+        }
+        
+        // Final change event to signify completion
         el.dispatchEvent(new Event("change", { bubbles: true }));
 
         const label =
@@ -330,6 +392,35 @@
     }
 
     // ==========================================
+    // MACRO EXECUTION (By CSS Selector)
+    // ==========================================
+    function executeMacroClick(selector) {
+        const el = document.querySelector(selector);
+        if (!el) {
+            return { success: false, error: `Macro failed: Element with selector "${selector}" not found.` };
+        }
+        // Temporarily assign a niboId to reuse executeClick logic
+        const tempId = "nibo-macro-click";
+        el.setAttribute(NIBO_ATTR, tempId);
+        const result = executeClick(tempId);
+        el.removeAttribute(NIBO_ATTR);
+        return result;
+    }
+
+    function executeMacroType(selector, text) {
+        const el = document.querySelector(selector);
+        if (!el) {
+             return { success: false, error: `Macro failed: Element with selector "${selector}" not found.` };
+        }
+        const tempId = "nibo-macro-type";
+        el.setAttribute(NIBO_ATTR, tempId);
+        const result = executeType(tempId, text);
+        el.removeAttribute(NIBO_ATTR);
+        return result;
+    }
+
+
+    // ==========================================
     // MESSAGE HANDLING (background.js ↔ content.js)
     // ==========================================
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -354,6 +445,12 @@
                     break;
                 case "type":
                     result = executeType(params.niboId, params.text);
+                    break;
+                case "macro_click":
+                    result = executeMacroClick(params.selector);
+                    break;
+                case "macro_type":
+                    result = executeMacroType(params.selector, params.text);
                     break;
                 case "press_key":
                     result = executePressKey(params.key);

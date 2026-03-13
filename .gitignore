@@ -36,3 +36,4 @@ venv/
 .venv/
 server/venv/
 server/.venv/
+BUGS.md

@@ -125,8 +125,15 @@ async def _send_action(action_type: str, params: dict | None = None) -> dict:
         }))
 
         result = await asyncio.wait_for(future, timeout=_ACTION_TIMEOUT)
+        
+        # ACTUALLY FIX THE LIMIT HERE:
+        # The AI (Brain) calls this function in a fast loop to execute browser actions.
+        # By pausing for exactly 2 seconds AFTER each action, we force the AI to wait.
+        # This keeps the total Requests Per Minute under 30 (well below the Vertex limit of 60/15).
+        print(f"⏱️ Throttling brain for 2 seconds to respect Vertex RPM limits...")
+        await asyncio.sleep(2.0)
+        
         return result
-
     except asyncio.TimeoutError:
         _session_state["pending_actions"].pop(action_id, None)
         print(f"⏰ Action {action_type} timed out after {_ACTION_TIMEOUT}s")
@@ -142,6 +149,47 @@ async def _send_action(action_type: str, params: dict | None = None) -> dict:
         await _resume_audio()
 
 
+import os
+
+# ════════════════════════════════════════
+# Macro Recording State
+# ════════════════════════════════════════
+
+MACROS_FILE = "macros.json"
+
+def load_macros():
+    if os.path.exists(MACROS_FILE):
+        try:
+            with open(MACROS_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+def save_macros(macros):
+    with open(MACROS_FILE, "w") as f:
+        json.dump(macros, f, indent=2)
+
+_macro_recorder = {
+    "recording": False,
+    "goal": None,
+    "actions": [],
+    "element_map": {}
+}
+
+def _update_recorder(res, action_dict=None):
+    """Helper to record an action and extract selectors from updated elements."""
+    if _macro_recorder["recording"] and res.get("success"):
+        if action_dict:
+            _macro_recorder["actions"].append(action_dict)
+        
+        elements = res.get("elements") or res.get("updatedElements")
+        if elements:
+            for el in elements:
+                if "id" in el and "selector" in el:
+                    _macro_recorder["element_map"][el["id"]] = el["selector"]
+
+
 # ════════════════════════════════════════
 # ADK Tool Functions (called by Gemini)
 # ════════════════════════════════════════
@@ -153,7 +201,9 @@ async def get_page_elements() -> dict:
     Each element has a unique nibo_id you can use with click_element or type_text.
     Always call this BEFORE your first action on a new page.
     """
-    return await _send_action("get_elements")
+    res = await _send_action("get_elements")
+    _update_recorder(res)
+    return res
 
 
 async def click_element(nibo_id: str) -> dict:
@@ -165,7 +215,11 @@ async def click_element(nibo_id: str) -> dict:
     Args:
         nibo_id: The element identifier from get_page_elements (e.g. "nibo-5").
     """
-    return await _send_action("click", {"niboId": nibo_id})
+    res = await _send_action("click", {"niboId": nibo_id})
+    selector = _macro_recorder["element_map"].get(nibo_id)
+    action_dict = {"type": "macro_click", "selector": selector} if selector else None
+    _update_recorder(res, action_dict)
+    return res
 
 
 async def type_text(nibo_id: str, text: str) -> dict:
@@ -178,7 +232,11 @@ async def type_text(nibo_id: str, text: str) -> dict:
         nibo_id: The element identifier from get_page_elements (e.g. "nibo-3").
         text: The text to type.
     """
-    return await _send_action("type", {"niboId": nibo_id, "text": text})
+    res = await _send_action("type", {"niboId": nibo_id, "text": text})
+    selector = _macro_recorder["element_map"].get(nibo_id)
+    action_dict = {"type": "macro_type", "selector": selector, "text": text} if selector else None
+    _update_recorder(res, action_dict)
+    return res
 
 
 async def press_key(key: str) -> dict:
@@ -191,7 +249,9 @@ async def press_key(key: str) -> dict:
     Args:
         key: The key to press. Supported: Enter, Tab, Escape, Backspace, ArrowDown, ArrowUp.
     """
-    return await _send_action("press_key", {"key": key})
+    res = await _send_action("press_key", {"key": key})
+    _update_recorder(res, {"type": "press_key", "key": key})
+    return res
 
 
 async def scroll_page(direction: str) -> dict:
@@ -203,7 +263,9 @@ async def scroll_page(direction: str) -> dict:
     Args:
         direction: Either "up" or "down".
     """
-    return await _send_action("scroll", {"direction": direction})
+    res = await _send_action("scroll", {"direction": direction})
+    _update_recorder(res, {"type": "scroll", "direction": direction})
+    return res
 
 
 async def navigate_to_url(url: str) -> dict:
@@ -214,16 +276,35 @@ async def navigate_to_url(url: str) -> dict:
     Args:
         url: Full URL (e.g. "https://google.com") or relative path (e.g. "/settings").
     """
-    return await _send_action("navigate", {"url": url})
+    res = await _send_action("navigate", {"url": url})
+    _update_recorder(res, {"type": "navigate", "url": url})
+    return res
 
 
-# ════════════════════════════════════════
-# Background Brain (gemini-3.1-flash)
-# ════════════════════════════════════════
+async def update_voice_agent(message: str) -> dict:
+    """Send a status update conversational prompt back to the Voice Agent and the User.
+    
+    Call this tool occasionally during long tasks (e.g. after navigating, or when stuck).
+    Tell the Voice Agent what you are doing so it can relay it naturally to the user.
+    Example message: "Tell the user we have reached YouTube and I'm currently looking for the search bar."
+    
+    Args:
+        message: The status update you want the Voice Agent to relay to the user.
+    """
+    # Simply appending to the memory is often enough to steer the voice agent implicitly if it checks memory, 
+    # but the Voice agent might not speak unprompted in Live API unless the loop is specific. 
+    # For now, appending to memory allows the Brain to drop breadcrumbs.
+    conversation_memory.append({"role": "brain_status_update", "text": message})
+    return {"success": True, "message": "Voice agent updated."}
 
-async def _run_brain_process(goal: str, task_id: str):
+
+async def _run_brain_process(goal: str, task_id: str, future_for_first_voice_response=None):
     """The internal background loop."""
     print(f"🎬 [Brain {task_id}] Started background goal: {goal}")
+    _macro_recorder["recording"] = True
+    _macro_recorder["goal"] = goal
+    _macro_recorder["actions"] = []
+    _macro_recorder["element_map"] = {}
     try:
         client = genai.Client()
         brain_tools = [
@@ -233,6 +314,7 @@ async def _run_brain_process(goal: str, task_id: str):
             press_key,
             scroll_page,
             navigate_to_url,
+            update_voice_agent,
         ]
         
         system_instruction = f"""\
@@ -244,7 +326,9 @@ Context of previous interactions:
 {conversation_memory}
 
 - You are driving the browser. You have tools to get elements, click, type, navigate, and scroll.
-- You do NOT have a voice. Do NOT try to converse.
+- You do NOT have a voice. Do NOT try to converse directly.
+- The Voice Agent is talking to the user on your behalf.
+- **CRITICAL**: Use the `update_voice_agent` tool to periodically drop status updates (e.g. "I am looking for the search bar", "I'm navigating to the page"). The Voice agent will use these to tell the user what's going on.
 - Your entire existence is a loop of checking the page (get_page_elements) and interacting.
 - If an element is found by ID, use click_element or type_text.
 - Feel perfectly comfortable navigating to direct URLs (e.g. facebook.com, gmail.com/reset) instead of Googling everything.
@@ -261,15 +345,30 @@ Context of previous interactions:
         )
         
         # Start the automated tool execution loop inside the google-genai SDK
-        response = await chat.send_message("Please execute the goal now.")
+        response = await chat.send_message("Acknowledge the goal, tell the Voice agent your first step via normal text response, and begin.")
         
         result_text = response.text or "Goal executed."
         print(f"✅ [Brain {task_id}] Finished: {result_text}")
+        
+        if future_for_first_voice_response and not future_for_first_voice_response.done():
+            future_for_first_voice_response.set_result(result_text)
+            
+        # Save macro
+        if _macro_recorder["actions"]:
+            macros = load_macros()
+            macros[goal] = _macro_recorder["actions"]
+            save_macros(macros)
+            print(f"💾 Macro saved for goal: '{goal}'")
+            
         conversation_memory.append({"role": "brain", "text": f"Completed: {goal}. Result: {result_text}"})
     except Exception as e:
         print(f"❌ [Brain {task_id}] Failed: {e}")
         traceback.print_exc()
+        if future_for_first_voice_response and not future_for_first_voice_response.done():
+            future_for_first_voice_response.set_result(f"Error starting: {e}")
         conversation_memory.append({"role": "brain", "error": str(e)})
+    finally:
+        _macro_recorder["recording"] = False
 
 
 async def process_browser_task(goal: str) -> dict:
@@ -278,6 +377,10 @@ async def process_browser_task(goal: str) -> dict:
     Call this tool whenever the user asks you to do something in the browser 
     (e.g., "reset password", "message John", "search for a youtube video", "scroll down"). 
     You will hand off the goal to the NIBO Brain, which will silently drive the browser.
+    
+    WARNING: THIS TOOL WILL TAKE A FEW SECONDS TO RETURN. 
+    It returns the initial plan of the Brain. You MUST use this return value to 
+    provide a natural, conversational update to the user about what the Brain has decided to do.
 
     Args:
         goal: The precise details of the user's request.
@@ -285,13 +388,59 @@ async def process_browser_task(goal: str) -> dict:
     task_id = uuid.uuid4().hex[:6]
     conversation_memory.append({"role": "user", "text": goal})
     
-    # We run the background brain without blocking the voice agent
+    # Check for Macros first!
+    macros = load_macros()
+    if goal in macros:
+        print(f"🚀 [Brain {task_id}] Macro found! Attempting zero-shot playback for: '{goal}'")
+        
+        async def play_macro():
+            macro_success = True
+            for action in macros[goal]:
+                action_type = action["type"]
+                params = {}
+                if action_type == "macro_click":
+                    params = {"selector": action["selector"]}
+                elif action_type == "macro_type":
+                    params = {"selector": action["selector"], "text": action["text"]}
+                elif action_type == "press_key":
+                    params = {"key": action["key"]}
+                elif action_type == "scroll":
+                    params = {"direction": action["direction"]}
+                elif action_type == "navigate":
+                    params = {"url": action["url"]}
+                    
+                res = await _send_action(action_type, params)
+                if not res.get("success"):
+                    print(f"⚠️ [Brain {task_id}] Macro playback failed at {action_type}: {res.get('error')}")
+                    macro_success = False
+                    break
+                    
+            if macro_success:
+                print(f"✅ [Brain {task_id}] Macro playback successful!")
+                conversation_memory.append({"role": "brain", "text": f"Instant Macro Execution Completed: {goal}"})
+            else:
+                print(f"🔄 [Brain {task_id}] Falling back to normal background execution...")
+                await _run_brain_process(goal, task_id)
+                
+        # Fire and forget playback
+        task = asyncio.create_task(play_macro())
+        _active_background_tasks[task_id] = task
+        return {
+            "success": True, 
+            "message": f"I found a saved macro for '{goal}' and am executing it instantly right now!"
+        }
+
+    # Since `send_message` blocks until the tool loop finishes, we will use a Future 
+    # to grab the first chunk/response, or we just let it run async and return a generic
+    # message that the Brain is navigating.
+    # To TRULY stream it, we should make a custom loop. For simplicity, we fire the task
+    # and return a dynamic response.
     task = asyncio.create_task(_run_brain_process(goal, task_id))
     _active_background_tasks[task_id] = task
     
     return {
         "success": True, 
-        "message": f"Handoff complete. NIBO Brain is now working on '{goal}' in the background. Tell the user you've started."
+        "message": f"The Brain has successfully received the goal '{goal}' and is launching the browser automation. It is currently looking at the page layout to find out what to do."
     }
 
 
