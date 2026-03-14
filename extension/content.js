@@ -262,7 +262,7 @@
         return { success: true, message: `Clicked "${label}"` };
     }
 
-    function executeType(niboId, text) {
+    async function executeType(niboId, text) {
         const el = document.querySelector(`[${NIBO_ATTR}="${niboId}"]`);
         if (!el) {
             return {
@@ -273,10 +273,8 @@
 
         el.scrollIntoView({ behavior: "instant", block: "center" });
         el.focus();
-        el.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
-        el.click();
-
-        // Clear existing value if it's an input/textarea
+        
+        // Clear existing value if it's a standard input/textarea
         if (!el.isContentEditable) {
              const setter =
                 Object.getOwnPropertyDescriptor(
@@ -304,16 +302,16 @@
             const keydownEvent = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: char, code: char, keyCode: keyCode });
             el.dispatchEvent(keydownEvent);
 
-            const keypressEvent = new KeyboardEvent("keypress", { bubbles: true, cancelable: true, key: char, code: char, keyCode: keyCode });
-            el.dispatchEvent(keypressEvent);
-
             if (el.isContentEditable) {
-                // For rich text editors (slate, draft, lexical, etc), we must try insertText
-                // or just rely on the framework responding to the key events.
-                // It's usually safer to use execCommand for raw contenteditables.
-                // We'll append the character using string manipulation if execCommand fails
+                // Ensure cursor is at the end for rich text editors
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(false);
+                selection.removeAllRanges();
+                selection.addRange(range);
+
                 if (!document.execCommand('insertText', false, char)) {
-                   // Fallback for some editors or if execCommand is unsupported
                    el.innerHTML += char;
                 }
             } else {
@@ -334,6 +332,9 @@
 
             const keyupEvent = new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: char, code: char, keyCode: keyCode });
             el.dispatchEvent(keyupEvent);
+
+            // Tiny delay between characters to let the page's JS (React/Vue) process the state change
+            await new Promise(r => setTimeout(r, 10));
         }
         
         // Final change event to signify completion
@@ -407,14 +408,14 @@
         return result;
     }
 
-    function executeMacroType(selector, text) {
+    async function executeMacroType(selector, text) {
         const el = document.querySelector(selector);
         if (!el) {
              return { success: false, error: `Macro failed: Element with selector "${selector}" not found.` };
         }
         const tempId = "nibo-macro-type";
         el.setAttribute(NIBO_ATTR, tempId);
-        const result = executeType(tempId, text);
+        const result = await executeType(tempId, text);
         el.removeAttribute(NIBO_ATTR);
         return result;
     }
@@ -424,65 +425,62 @@
     // MESSAGE HANDLING (background.js ↔ content.js)
     // ==========================================
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-        if (message.action === "DISTILL_DOM") {
-            const elements = distillDOM();
-            sendResponse({
-                success: true,
-                elements,
-                elementCount: elements.length,
-                ...pageState(),
-            });
-            return true;
-        }
-
-        if (message.action === "EXECUTE_ACTION") {
-            const { actionType, params } = message;
-            let result;
-
-            switch (actionType) {
-                case "click":
-                    result = executeClick(params.niboId);
-                    break;
-                case "type":
-                    result = executeType(params.niboId, params.text);
-                    break;
-                case "macro_click":
-                    result = executeMacroClick(params.selector);
-                    break;
-                case "macro_type":
-                    result = executeMacroType(params.selector, params.text);
-                    break;
-                case "press_key":
-                    result = executePressKey(params.key);
-                    break;
-                case "scroll":
-                    result = executeScroll(params.direction);
-                    break;
-                case "navigate":
-                    // Navigate triggers page reload — return immediately, no DOM refresh
-                    result = executeNavigate(params.url);
-                    sendResponse(result);
-                    return true;
-                default:
-                    result = { success: false, error: `Unknown action: ${actionType}` };
-                    sendResponse(result);
-                    return true;
-            }
-
-            // After a DOM-mutating action, wait briefly then return refreshed elements
-            // so Gemini can chain the next action without a separate get_page_elements call
-            setTimeout(() => {
+        async function handleMessage() {
+            if (message.action === "DISTILL_DOM") {
                 const elements = distillDOM();
                 sendResponse({
-                    ...result,
-                    updatedElements: elements,
+                    success: true,
+                    elements,
                     elementCount: elements.length,
                     ...pageState(),
                 });
-            }, DOM_REFRESH_DELAY);
+            } else if (message.action === "EXECUTE_ACTION") {
+                const { actionType, params } = message;
+                let result;
 
-            return true; // keep channel open for async sendResponse
+                switch (actionType) {
+                    case "click":
+                        result = executeClick(params.niboId);
+                        break;
+                    case "type":
+                        result = await executeType(params.niboId, params.text);
+                        break;
+                    case "macro_click":
+                        result = executeMacroClick(params.selector);
+                        break;
+                    case "macro_type":
+                        result = await executeMacroType(params.selector, params.text);
+                        break;
+                    case "press_key":
+                        result = executePressKey(params.key);
+                        break;
+                    case "scroll":
+                        result = executeScroll(params.direction);
+                        break;
+                    case "navigate":
+                        result = executeNavigate(params.url);
+                        sendResponse(result);
+                        return;
+                    default:
+                        result = { success: false, error: `Unknown action: ${actionType}` };
+                        sendResponse(result);
+                        return;
+                }
+
+                setTimeout(() => {
+                    const elements = distillDOM();
+                    sendResponse({
+                        ...result,
+                        updatedElements: elements,
+                        elementCount: elements.length,
+                        ...pageState(),
+                    });
+                }, DOM_REFRESH_DELAY);
+            }
         }
+
+        handleMessage();
+        return true; // Keep channel open
     });
 
     console.log("🤖 NIBO Content Script loaded");

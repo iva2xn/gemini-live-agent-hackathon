@@ -2,29 +2,426 @@
 <html>
 
 <head>
+    <meta charset="UTF-8">
+    <title>NIBO Autopilot</title>
+    <!-- Geist-like font fallback -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: sans-serif;
-            padding: 15px;
-            text-align: center;
+        :root {
+            /* User-supplied theme variables */
+            --background: #ffffff;
+            --foreground: #020817;
+            --card: #ffffff;
+            --card-foreground: #020817;
+            --popover: #ffffff;
+            --popover-foreground: #020817;
+            --primary: #0052ff;
+            --primary-foreground: #ffffff;
+            --secondary: #f1f5f9;
+            --secondary-foreground: #020817;
+            --muted: #f1f5f9;
+            --muted-foreground: #64748b;
+            --accent: #f1f5f9;
+            --accent-foreground: #020817;
+            --destructive: #ef4444;
+            --destructive-foreground: #f8f9fa;
+            --border: #e2e8f0;
+            --input: #e2e8f0;
+            --ring: #0052ff;
+            --radius: 0.75rem;
+            
+            --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+            --shadow-sm: 0px 2px 4px 0px hsl(0 0% 0% / 0.10), 0px 1px 2px -1px hsl(0 0% 0% / 0.10);
+            --shadow: 0px 2px 4px 0px hsl(0 0% 0% / 0.10), 0px 1px 2px -1px hsl(0 0% 0% / 0.10);
+            --shadow-md: 0px 4px 6px -1px hsl(0 0% 0% / 0.10), 0px 2px 4px -2px hsl(0 0% 0% / 0.10);
         }
 
-        button {
-            display: block;
-            width: 100%;
-            margin: 10px 0;
-            padding: 10px;
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: var(--background);
+            color: var(--foreground);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ════════════════════════════════════════ */
+        /* HEADER SECTION                          */
+        /* ════════════════════════════════════════ */
+        header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--background);
+            z-index: 10;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        h1 {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            color: var(--foreground);
+            font-family: 'Inter', sans-serif;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #cbd5e1;
+            transition: all 0.3s ease;
+        }
+
+        .status-dot.active {
+            background: #10b981;
+            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.6; }
+            50% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.6; }
+        }
+
+        .settings-btn {
+            background: none;
+            border: none;
+            color: var(--muted-foreground);
             cursor: pointer;
+            padding: 4px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .settings-btn:hover {
+            color: var(--foreground);
+            background: var(--secondary);
+        }
+
+        /* ════════════════════════════════════════ */
+        /* TABS SECTION                            */
+        /* ════════════════════════════════════════ */
+        .tabs {
+            display: flex;
+            padding: 0 8px;
+            background: var(--background);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tab {
+            flex: 1;
+            padding: 12px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--muted-foreground);
+            text-align: center;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .tab.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+
+        .tab:hover:not(.active) {
+            color: var(--foreground);
+        }
+
+        /* ════════════════════════════════════════ */
+        /* CONTENT SECTION                         */
+        /* ════════════════════════════════════════ */
+        .tab-content {
+            flex: 1;
+            overflow-y: auto;
+            position: relative;
+            background: #fafafa;
+        }
+
+        .pane {
+            display: none;
+            height: 100%;
+            padding: 20px;
+        }
+
+        .pane.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .empty-state {
+            margin: auto;
+            text-align: center;
+            max-width: 200px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            color: var(--muted-foreground);
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .empty-icon {
+            font-size: 32px;
+            margin-bottom: 4px;
+            filter: grayscale(1);
+            opacity: 0.4;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+            line-height: 1.5;
+            font-weight: 400;
+        }
+
+        /* ════════════════════════════════════════ */
+        /* CHAT BUBBLES                            */
+        /* ════════════════════════════════════════ */
+        .chat-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .msg {
+            max-width: 85%;
+            padding: 10px 14px;
+            border-radius: 14px;
+            font-size: 14px;
+            line-height: 1.5;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .msg-user {
+            align-self: flex-end;
+            background: var(--primary);
+            color: var(--primary-foreground);
+            border-bottom-right-radius: 2px;
+        }
+
+        .msg-model {
+            align-self: flex-start;
+            background: white;
+            color: var(--foreground);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 2px;
+        }
+
+        .tool-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: var(--secondary);
+            color: var(--muted-foreground);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-top: 6px;
+            border: 1px solid var(--border);
+        }
+
+        /* ════════════════════════════════════════ */
+        /* FOOTER / CONTROLS SECTION               */
+        /* ════════════════════════════════════════ */
+        footer {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+            background: var(--background);
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            height: 44px;
+            border: none;
+            border-radius: var(--radius);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            box-shadow: var(--shadow-xs);
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: var(--primary-foreground);
+            flex: 2;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-primary:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .btn-primary:disabled {
+            filter: grayscale(1);
+            opacity: 0.5;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: var(--secondary);
+            color: var(--foreground);
+            border: 1px solid var(--border);
+            flex: 1;
+        }
+
+        .btn-secondary:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--border);
+        }
+
+        /* ════════════════════════════════════════ */
+        /* MACRO LIST                              */
+        /* ════════════════════════════════════════ */
+        .macro-item {
+            background: white;
+            padding: 14px 16px;
+            border-radius: var(--radius);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid var(--border);
+            margin-bottom: 8px;
+            transition: all 0.2s;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .macro-item:hover {
+            border-color: var(--primary);
+            box-shadow: var(--shadow);
+            transform: translateX(2px);
+        }
+
+        .macro-name {
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .macro-play-btn {
+            background: var(--secondary);
+            border: none;
+            color: var(--primary);
+            cursor: pointer;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .macro-play-btn:hover {
+            background: var(--primary);
+            color: white;
         }
     </style>
 </head>
 
 <body>
-    <h2>Autopilot Bridge</h2>
-    <button id="startBtn">Start Recording</button>
-    <button id="stopBtn" disabled>Stop Recording</button>
-    <button id="screenshotBtn">Take Screenshot</button>
-    <p id="status">Status: Idle</p>
+    <header>
+        <div class="header-left">
+            <h1>NIBO</h1>
+            <div id="statusIcon" class="status-dot"></div>
+        </div>
+        <button id="settingsBtn" class="settings-btn" title="Settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+        </button>
+    </header>
+
+    <div class="tabs">
+        <div id="tabChat" class="tab active">Conversation</div>
+        <div id="tabMacros" class="tab">Macros</div>
+    </div>
+
+    <div class="tab-content">
+        <!-- Conversation Pane -->
+        <div id="paneChat" class="pane active">
+            <div id="chatList" class="chat-list">
+                <div class="empty-state">
+                    <div class="empty-icon">💬</div>
+                    <p>No messages yet.<br>Try "Go to YouTube" to start.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Macros Pane -->
+        <div id="paneMacros" class="pane">
+            <div id="macroList" class="macro-list">
+                <div class="empty-state">
+                    <div class="empty-icon">📂</div>
+                    <p>No macros saved locally yet.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <button id="startBtn" class="btn btn-primary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+            Listen
+        </button>
+        <button id="stopBtn" class="btn btn-secondary" disabled title="Stop">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 6h12v12H6z"/>
+            </svg>
+        </button>
+    </footer>
 
     <script src="sidepanel.js"></script>
 </body>
