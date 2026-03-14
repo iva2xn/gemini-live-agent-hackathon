@@ -26,6 +26,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     else if (message.action === 'STOP_RECORDING') {
         chrome.runtime.sendMessage({ action: 'OFFSCREEN_STOP_MIC' });
     }
+    // Relay transcription to sidepanel for naming
+    else if (message.type === 'transcription') {
+        chrome.runtime.sendMessage(message).catch(() => {});
+    }
     else if (message.action === 'TAKE_SCREENSHOT') {
         chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 80 }, (dataUrl) => {
             if (chrome.runtime.lastError) {
@@ -36,23 +40,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
     }
 
-    // ── Tool action relay (offscreen → content script → offscreen) ──
     else if (message.action === 'RELAY_ACTION') {
+        console.log("Relaying action:", message.actionType);
+        
+        // Broadcast to sidepanel for recording (unless it's a playback action itself)
+        if (message.actionId !== 'macro-playback' && !message.actionId?.startsWith('macro-playback-')) {
+            chrome.runtime.sendMessage({
+                action: 'RECORD_ACTION',
+                actionType: message.actionType,
+                params: message.params
+            }).catch(() => {});
+        }
+
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (!tabs || !tabs[0]) {
-                chrome.runtime.sendMessage({
-                    action: 'OFFSCREEN_ACTION_RESULT',
-                    actionId: message.actionId,
-                    result: { success: false, error: 'No active tab found.' },
-                });
+                const errorRes = { success: false, error: 'No active tab found.' };
+                if (message.actionId !== 'macro-playback') {
+                    chrome.runtime.sendMessage({ action: 'OFFSCREEN_ACTION_RESULT', actionId: message.actionId, result: errorRes });
+                }
                 return;
             }
 
             // Decide the content script message based on action type
             if (message.actionType === 'navigate') {
                 let finalUrl = message.params.url;
-                // Smart URL parser: if no protocol, and has a dot (facebook.com), add https://
-                // Otherwise, treat as a google search.
                 if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
                     if (finalUrl.includes('.') && !finalUrl.includes(' ')) {
                         finalUrl = 'https://' + finalUrl;
@@ -91,24 +102,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 : { action: 'EXECUTE_ACTION', actionType: message.actionType, params: message.params };
 
             chrome.tabs.sendMessage(tabs[0].id, contentMsg, (response) => {
-                if (chrome.runtime.lastError) {
-                    chrome.runtime.sendMessage({
-                        action: 'OFFSCREEN_ACTION_RESULT',
-                        actionId: message.actionId,
-                        // If the page is reloading or navigating away, the message port closes and throws this error.
-                        // This usually means the click or enter key correctly triggered a navigation!
-                        result: { success: true, message: "Action succeeded (page is navigating/reloading)." },
-                    });
-                    return;
-                }
+                const result = chrome.runtime.lastError 
+                    ? { success: true, message: "Action succeeded (navigation/reload)." }
+                    : response;
 
                 chrome.runtime.sendMessage({
                     action: 'OFFSCREEN_ACTION_RESULT',
                     actionId: message.actionId,
-                    result: response,
+                    result: result,
                 });
             });
         });
-        return true; // keep channel open for async sendResponse
+        return true;
+    }
+
+    // ── Macro Playback ──
+    else if (message.action === 'PLAYBACK_MACRO') {
+        async function runSteps(steps) {
+            console.log("Starting macro playback with", steps.length, "steps");
+            for (const step of steps) {
+                console.log("Playing step:", step.actionType);
+                await new Promise((resolve) => {
+                    // Reuse the existing relay logic by triggering a RELAY_ACTION
+                    // But we don't need an actionId since we're not sending it back to Gemini
+                    chrome.runtime.sendMessage({
+                        action: 'RELAY_ACTION',
+                        actionType: step.actionType,
+                        params: step.params,
+                        actionId: 'macro-playback'
+                    }, () => {
+                        // Wait a bit for the action to complete/settle
+                        setTimeout(resolve, 1000);
+                    });
+                });
+            }
+            console.log("Macro playback finished");
+        }
+        runSteps(message.steps);
     }
 });

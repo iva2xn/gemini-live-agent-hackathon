@@ -274,25 +274,25 @@
         el.scrollIntoView({ behavior: "instant", block: "center" });
         el.focus();
         
-        // Clear existing value if it's a standard input/textarea
-        if (!el.isContentEditable) {
+        // Clear existing value if it's a standard input/textarea or contenteditable
+        if (el.isContentEditable) {
+            el.innerHTML = '';
+        } else {
+             // More robust clearing for React/Vue: use the native value setter
              const setter =
-                Object.getOwnPropertyDescriptor(
-                    window.HTMLInputElement.prototype,
-                    "value"
-                )?.set ||
-                Object.getOwnPropertyDescriptor(
-                    window.HTMLTextAreaElement.prototype,
-                    "value"
-                )?.set;
+                Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set ||
+                Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
 
             if (setter) {
                 setter.call(el, "");
             } else {
                 el.value = "";
             }
-             el.dispatchEvent(new Event("input", { bubbles: true }));
         }
+        
+        // Trigger events to notify the page that the value has changed
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
 
         // Dispatch key events for each character to trigger React/Rich text editor state
         for (let i = 0; i < text.length; i++) {

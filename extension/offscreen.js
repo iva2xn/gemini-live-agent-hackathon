@@ -54,7 +54,7 @@ async function startRecording() {
                 let s = Math.max(-1, Math.min(1, float32Data[i]));
                 int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
             }
-            if (ws.readyState === WebSocket.OPEN) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(int16Data.buffer);
             }
         };
@@ -69,6 +69,13 @@ async function startRecording() {
         silentGain.gain.value = 0;
         workletNode.connect(silentGain);
         silentGain.connect(audioContext.destination);
+
+        // Keep-alive heartbeat to prevent WebSocket timeout
+        window.wsHeartbeat = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'ping' }));
+            }
+        }, 20000); // 20 seconds
     };
 
     // ==========================================
@@ -82,8 +89,7 @@ async function startRecording() {
                 playAudioChunk(message.data);
             }
             else if (message.type === 'interrupted') {
-                // BARGE-IN: Stop all scheduled audio sources immediately!
-                console.log("⚡ Barge-in detected, stopping all queued audio");
+                console.log("Barge-in detected, stopping all queued audio");
                 for (const src of scheduledSources) {
                     try { src.stop(); } catch (_) { /* already stopped */ }
                 }
@@ -93,13 +99,13 @@ async function startRecording() {
                 window.ignoreAudioUntil = performance.now() + 500;
             }
             else if (message.type === 'turn_complete') {
-                console.log("✅ Gemini turn complete, listening...");
+                console.log("Gemini turn complete, listening...");
                 // Clean up finished sources
                 scheduledSources = [];
             }
             // ── Server is requesting a browser action ──
             else if (message.type === 'action') {
-                console.log(`🔧 Action requested: ${message.action_type}`, message);
+                console.log(`Action requested: ${message.action_type}`, message);
                 chrome.runtime.sendMessage({
                     action: 'RELAY_ACTION',
                     actionId: message.actionId,
@@ -180,6 +186,10 @@ function stopRecording() {
     if (ws) {
         ws.close();
         ws = null;
+    }
+    if (window.wsHeartbeat) {
+        clearInterval(window.wsHeartbeat);
+        window.wsHeartbeat = null;
     }
     scheduledSources = [];
     outputGain = null;

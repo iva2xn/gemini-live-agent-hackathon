@@ -30,6 +30,7 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from google import genai
 from google.genai import types
 
 from app.agent import root_agent
@@ -39,6 +40,8 @@ from app.tools import (
     resolve_action,
     set_live_queue,
     set_websocket,
+    load_macros,
+    playback_macro,
 )
 
 # ════════════════════════════════════════
@@ -131,9 +134,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     if not is_audio_paused():
                         live_request_queue.send_realtime(audio_blob)
 
-                # Text data = JSON (screenshot, action results, etc.)
+                # Text data = JSON (screenshot, action results, ping, etc.)
                 elif "text" in message and message["text"]:
                     data = json.loads(message["text"])
+
+                    if data.get("type") == "ping":
+                        # Just a heartbeat to keep the connection alive
+                        continue
 
                     if data.get("type") == "screenshot":
                         b64_data = data["data"].split(",")[1]
@@ -235,6 +242,56 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 @app.get("/health")
 async def health():
     return {"status": "ok", "agent": root_agent.name}
+
+@app.get("/macros")
+async def get_macros():
+    """Return the list of saved macros."""
+    macros = load_macros()
+    # Return as a list of dicts for the UI
+    return [{"name": name, "steps": len(steps)} for name, steps in macros.items()]
+
+@app.post("/playback/{goal}")
+async def run_macro(goal: str):
+    """Trigger a macro playback."""
+    res = await playback_macro(goal)
+    return res
+
+@app.post("/summarize-macro")
+async def summarize_macro(data: dict):
+    """Generate a short title for a workflow using Gemini."""
+    try:
+        actions = data.get("actions", [])
+        goal = data.get("goal", "")
+        
+        # Initialize a basic GenAI client for quick summarization
+        client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+        
+        prompt = f"""
+        Generate a very short (max 4 words), professional, and relevant title for a browser automation workflow.
+        User's initial goal: {goal}
+        Action sequence: {json.dumps(actions[:10])}
+        
+        Examples:
+        - "Play LoFi on YouTube"
+        - "Check Gmail Inbox"
+        - "Search flight on Expedia"
+        
+        Return ONLY the title string, no quotes or metadata.
+        """
+        
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt
+        )
+        
+        title = response.text.strip()
+        # Clean up any trailing dots or quotes Gemini might add
+        title = title.strip('".').strip()
+        
+        return {"title": title}
+    except Exception as e:
+        print(f"Summarization error: {e}")
+        return {"title": goal or "New Workflow"}
 
 
 if __name__ == "__main__":
