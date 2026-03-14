@@ -1,0 +1,10 @@
+.gcloudignore
+.git
+.gitignore
+venv/
+env/
+__pycache__/
+*.pyc
+.env
+# Ignore mac system files
+.DS_Store

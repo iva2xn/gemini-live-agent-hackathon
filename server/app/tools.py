@@ -42,7 +42,7 @@ _audio_gate = {
     "queue": None,     # Reference to LiveRequestQueue, set by main.py
 }
 
-_TOOL_RESPONSE_GRACE = 0.5  # seconds for ADK to finish sending the tool_response
+_TOOL_RESPONSE_GRACE = 0.1  # seconds for ADK to finish sending the tool_response
 
 
 def set_live_queue(queue):
@@ -130,8 +130,10 @@ async def _send_action(action_type: str, params: dict | None = None) -> dict:
         # The AI (Brain) calls this function in a fast loop to execute browser actions.
         # By pausing for exactly 2 seconds AFTER each action, we force the AI to wait.
         # This keeps the total Requests Per Minute under 30 (well below the Vertex limit of 60/15).
-        print(f"⏱️ Throttling brain for 2 seconds to respect Vertex RPM limits...")
-        await asyncio.sleep(2.0)
+        # Reduced throttling to 0.2s. Vertex AI limits are usually 60 RPM, 
+        # so 0.2s is still very safe while being much more responsive.
+        print(f"⏱️ Throttling brain for 0.2 seconds...")
+        await asyncio.sleep(0.2)
         
         return result
     except asyncio.TimeoutError:

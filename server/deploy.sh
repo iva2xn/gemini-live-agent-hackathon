@@ -27,7 +27,9 @@ gcloud run deploy $SERVICE_NAME \
     --allow-unauthenticated \
     --set-env-vars="GOOGLE_GENAI_USE_VERTEXAI=TRUE" \
     --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
-    --set-env-vars="GOOGLE_CLOUD_LOCATION=$REGION"
+    --set-env-vars="GOOGLE_CLOUD_LOCATION=$REGION" \
+    --timeout=3600 \
+    --concurrency=10
 
 echo ""
 echo "Deployment specific commands finished."
