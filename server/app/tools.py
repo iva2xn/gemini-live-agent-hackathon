@@ -56,15 +56,13 @@ def is_audio_paused():
 
 
 def _pause_audio():
-    """Pause realtime audio sending (called when tool starts)."""
-    _audio_gate["paused"] = True
+    """No-op: disabled to allow 'fully listen' mode."""
+    pass
 
 
 async def _resume_audio():
-    """Resume audio sending (called after tool completes)."""
-    # Wait for ADK to finish sending the tool_response to Gemini
-    await asyncio.sleep(_TOOL_RESPONSE_GRACE)
-    _audio_gate["paused"] = False
+    """No-op: disabled to allow 'fully listen' mode."""
+    pass
 
 
 def set_websocket(ws):
@@ -230,13 +228,41 @@ async def navigate_to_url(url: str) -> dict:
     return res
 
 
-async def save_context(info: str) -> dict:
-    """Save important information to the conversation memory for later use.
+MEMORY_FILE = "memory.json"
+
+def load_memory():
+    if os.path.exists(MEMORY_FILE):
+        try:
+            with open(MEMORY_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return []
+
+def save_memory(memory):
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(memory, f, indent=2)
+
+
+async def get_memory() -> dict:
+    """Retrieve all previously saved facts, preferences, and context.
     
-    Call this when the user says something important (e.g., their name, details for an email).
+    Use this if you feel you've forgotten a detail the user told you earlier.
+    """
+    memory = load_memory()
+    return {"success": True, "memory": memory}
+
+
+async def save_context(info: str) -> dict:
+    """Save important information to the persistent memory for later use.
+    
+    Call this when the user says something important (e.g., their name, details for an email, 
+    or a specific message they want you to remember).
     
     Args:
         info: The information to save.
     """
-    conversation_memory.append({"role": "user_context", "info": info})
-    return {"success": True, "message": "Context saved to global memory."}
+    memory = load_memory()
+    memory.append({"role": "user_context", "info": info, "timestamp": str(asyncio.get_event_loop().time())})
+    save_memory(memory)
+    return {"success": True, "message": "Context saved to persistent memory."}

@@ -38,9 +38,14 @@ async function startRecording() {
 
     ws.onopen = async () => {
         console.log("WebSocket connected to ADK Server");
-        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-        // We keep our MIC recording at 16000 Hz
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                sampleRate: 16000
+            }
+        });
         audioContext = new AudioContext({ sampleRate: 16000 });
         nextPlayTime = audioContext.currentTime;
 
