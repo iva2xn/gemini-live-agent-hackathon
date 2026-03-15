@@ -40,6 +40,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
     }
 
+
+
     else if (message.action === 'RELAY_ACTION') {
         console.log("Relaying action:", message.actionType);
         
@@ -104,5 +106,67 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 });
             });
         });
+    }
+});
+
+// ════════════════════════════════════════
+// CONTINUOUS RISK SCANNING
+// ════════════════════════════════════════
+const BACKEND_URL = 'https://nibo-backend-512400763301.us-central1.run.app'; // Update to your deployed Cloud Run URL if needed
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    // Only scan when the page is fully loaded and it is not an internal chrome page
+    if (changeInfo.status === 'complete' && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://')) {
+        // Wait briefly for UI frameworks to render
+        setTimeout(() => {
+            chrome.tabs.sendMessage(tabId, { action: "DISTILL_DOM" }, (response) => {
+                if (chrome.runtime.lastError) {
+                    console.log("[Scanner] Content script not ready or error:", chrome.runtime.lastError.message);
+                    return;
+                }
+                
+                if (response && response.success) {
+                    console.log(`[Scanner] Sending ${response.url} for safety analysis...`);
+                    fetch(`${BACKEND_URL}/api/scan`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            url: response.url,
+                            title: response.title,
+                            elements: response.elements || []
+                        })
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        console.log("[Scanner] Scan Result:", data);
+                        
+                        // Send to Side Panel
+                        chrome.runtime.sendMessage({ 
+                            action: 'UPDATE_RISK', 
+                            url: response.url,
+                            title: response.title,
+                            riskScore: data.risk_score || 0, 
+                            reasoning: data.reasoning || ""
+                        }).catch(() => {
+                            // Suppress error if the side panel is not open
+                        });
+
+                        // If score is high risk (e.g. > 60), send native OS background notification
+                        if (data.risk_score > 60) {
+                            chrome.notifications.create({
+                                type: 'basic',
+                                iconUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FAMqEFAFv4XfHAAAAAElFTkSuQmCC', // Red dot placeholder icon
+                                title: '⚠️ High Risk Website Detected',
+                                message: `NIBO Risk Score: ${data.risk_score}/100\nReason: ${data.reasoning}`,
+                                priority: 2,
+                                requireInteraction: true
+                            });
+                        }
+                        
+                    })
+                    .catch(err => console.error("[Scanner] Server scan error:", err));
+                }
+            });
+        }, 1500); // 1.5s delay
     }
 });

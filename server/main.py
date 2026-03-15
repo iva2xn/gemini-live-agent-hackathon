@@ -24,6 +24,7 @@ import json
 import os
 import uuid
 
+from pydantic import BaseModel
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from google.adk.agents.live_request_queue import LiveRequestQueue
@@ -240,6 +241,44 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 @app.get("/health")
 async def health():
     return {"status": "ok", "agent": root_agent.name}
+
+class ScanRequest(BaseModel):
+    url: str
+    title: str
+    elements: list
+
+@app.post("/api/scan")
+async def scan_page(req: ScanRequest):
+    client = genai.Client()
+    elements_text = "\n".join([f"<{el.get('tag', '')} text='{el.get('text', '')}' href='{el.get('href', '')}'>" for el in req.elements[:100]])
+    
+    prompt = f"""
+    Analyze this webpage for scam or phishing risks.
+    URL: {req.url}
+    Title: {req.title}
+    Elements Snapshot:
+    {elements_text}
+    
+    Return a JSON object ONLY, with the following format:
+    {{
+        "risk_score": <number 0-100, 100 being extreme scam/phishing risk>,
+        "reasoning": "<short explanation why>"
+    }}
+    """
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.2
+            )
+        )
+        data = json.loads(response.text)
+        return data
+    except Exception as e:
+        print(f"Scan error: {e}")
+        return {"risk_score": 0, "reasoning": f"Failed to analyze risk: {e}"}
 
 
 if __name__ == "__main__":

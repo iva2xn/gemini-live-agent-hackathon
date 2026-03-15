@@ -483,5 +483,7 @@
         return true; // Keep channel open
     });
 
+
+
     console.log("🤖 NIBO Content Script loaded");
 })();

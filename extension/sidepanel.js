@@ -1,4 +1,3 @@
-// Config
 const SERVER_URL = 'https://nibo-backend-512400763301.us-central1.run.app';
 
 // DOM Elements
@@ -60,4 +59,49 @@ function setUIState(recording) {
 // ════════════════════════════════════════
 
 chrome.runtime.onMessage.addListener((message) => {
+    if (message.action === 'UPDATE_RISK') {
+        const loadingState = document.getElementById('loadingState');
+        const riskSection = document.getElementById('riskSection');
+        const riskUrl = document.getElementById('riskUrl');
+        const riskScoreBadge = document.getElementById('riskScoreBadge');
+        const riskLevel = document.getElementById('riskLevel');
+        const riskReasoning = document.getElementById('riskReasoning');
+
+        if (!riskSection) return;
+
+        if (loadingState) loadingState.style.display = 'none';
+        riskSection.style.display = 'block';
+        riskUrl.innerText = message.title || message.url;
+        riskScoreBadge.innerText = message.riskScore;
+        riskReasoning.innerText = message.reasoning;
+
+        // Apply styling based on score
+        if (message.riskScore < 30) {
+            riskScoreBadge.style.backgroundColor = 'var(--primary)'; 
+            riskLevel.innerText = "Safe Website";
+            riskLevel.style.color = 'var(--primary)';
+            riskScoreBadge.style.animation = 'none';
+        } else if (message.riskScore < 60) {
+            riskScoreBadge.style.backgroundColor = '#f59e0b'; // Amber
+            riskLevel.innerText = "Moderate Risk";
+            riskLevel.style.color = '#f59e0b';
+            riskScoreBadge.style.animation = 'none';
+        } else {
+            riskScoreBadge.style.backgroundColor = '#ef4444'; // Red
+            riskLevel.innerText = "High Risk / Scam Detected!";
+            riskLevel.style.color = '#ef4444';
+            if (message.riskScore > 80) {
+                // Add CSS pulse if not present
+                if (!document.getElementById('pulse-style')) {
+                    const style = document.createElement('style');
+                    style.id = 'pulse-style';
+                    style.innerHTML = `@keyframes blink { 50% { opacity: 0.5; } }`;
+                    document.head.appendChild(style);
+                }
+                riskScoreBadge.style.animation = 'blink 1s ease-in-out infinite';
+            } else {
+                riskScoreBadge.style.animation = 'none';
+            }
+        }
+    }
 });
