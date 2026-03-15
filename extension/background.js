@@ -43,15 +43,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     else if (message.action === 'RELAY_ACTION') {
         console.log("Relaying action:", message.actionType);
         
-        // Broadcast to sidepanel for recording (unless it's a playback action itself)
-        if (message.actionId !== 'macro-playback' && !message.actionId?.startsWith('macro-playback-')) {
-            chrome.runtime.sendMessage({
-                action: 'RECORD_ACTION',
-                actionType: message.actionType,
-                params: message.params
-            }).catch(() => {});
-        }
-
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (!tabs || !tabs[0]) {
                 const errorRes = { success: false, error: 'No active tab found.' };
@@ -113,31 +104,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 });
             });
         });
-        return true;
-    }
-
-    // ── Macro Playback ──
-    else if (message.action === 'PLAYBACK_MACRO') {
-        async function runSteps(steps) {
-            console.log("Starting macro playback with", steps.length, "steps");
-            for (const step of steps) {
-                console.log("Playing step:", step.actionType);
-                await new Promise((resolve) => {
-                    // Reuse the existing relay logic by triggering a RELAY_ACTION
-                    // But we don't need an actionId since we're not sending it back to Gemini
-                    chrome.runtime.sendMessage({
-                        action: 'RELAY_ACTION',
-                        actionType: step.actionType,
-                        params: step.params,
-                        actionId: 'macro-playback'
-                    }, () => {
-                        // Wait a bit for the action to complete/settle
-                        setTimeout(resolve, 1000);
-                    });
-                });
-            }
-            console.log("Macro playback finished");
-        }
-        runSteps(message.steps);
     }
 });

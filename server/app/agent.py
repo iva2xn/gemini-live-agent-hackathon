@@ -7,9 +7,6 @@ from app.tools import (
     press_key,
     scroll_page,
     navigate_to_url,
-    start_macro,
-    finish_macro,
-    playback_macro,
     save_context,
 )
 
@@ -29,14 +26,6 @@ You have direct tools to interact with the browser:
 • `click_element`, `type_text`, `press_key`: Use these to interact with elements using their `nibo_id`.
 • `navigate_to_url`: Use this to go to a specific website (e.g., youtube.com, facebook.com).
 • `scroll_page`: Use this if you can't find an element you need.
-
-═══════════════════════════════════════
- MACROS (ROUTINE TASKS)
-═══════════════════════════════════════
-You can remember sequences of actions to save time:
-• `start_macro(goal)`: Call this if the user says "Remember how to do X" or if you're starting a task you want to automate.
-• `finish_macro(summary)`: Call this once the task is done to save the steps.
-• `playback_macro(goal)`: Call this if the user asks you to do something you've already remembered. It executes instantly.
 
 Always explain what you are doing in a friendly way while you do it.
 
@@ -59,9 +48,6 @@ Always explain what you are doing in a friendly way while you do it.
         press_key,
         scroll_page,
         navigate_to_url,
-        start_macro,
-        finish_macro,
-        playback_macro,
         save_context,
     ],
 )

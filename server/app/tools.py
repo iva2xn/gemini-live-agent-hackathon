@@ -153,49 +153,6 @@ async def _send_action(action_type: str, params: dict | None = None) -> dict:
 
 import os
 
-# ════════════════════════════════════════
-# Macro Recording State
-# ════════════════════════════════════════
-
-MACROS_FILE = "macros.json"
-
-def load_macros():
-    if os.path.exists(MACROS_FILE):
-        try:
-            with open(MACROS_FILE, "r") as f:
-                return json.load(f)
-        except:
-            pass
-    return {}
-
-def save_macros(macros):
-    with open(MACROS_FILE, "w") as f:
-        json.dump(macros, f, indent=2)
-
-_macro_recorder = {
-    "recording": False,
-    "goal": None,
-    "actions": [],
-    "element_map": {}
-}
-
-def _update_recorder(res, action_dict=None):
-    """Helper to record an action and extract selectors from updated elements."""
-    if _macro_recorder["recording"] and res.get("success"):
-        if action_dict:
-            _macro_recorder["actions"].append(action_dict)
-        
-        elements = res.get("elements") or res.get("updatedElements")
-        if elements:
-            for el in elements:
-                if "id" in el and "selector" in el:
-                    _macro_recorder["element_map"][el["id"]] = el["selector"]
-
-
-# ════════════════════════════════════════
-# ADK Tool Functions (called by Gemini)
-# ════════════════════════════════════════
-
 async def get_page_elements() -> dict:
     """Get all interactive elements visible on the current webpage.
 
@@ -204,7 +161,6 @@ async def get_page_elements() -> dict:
     Always call this BEFORE your first action on a new page.
     """
     res = await _send_action("get_elements")
-    _update_recorder(res)
     return res
 
 
@@ -218,9 +174,6 @@ async def click_element(nibo_id: str) -> dict:
         nibo_id: The element identifier from get_page_elements (e.g. "nibo-5").
     """
     res = await _send_action("click", {"niboId": nibo_id})
-    selector = _macro_recorder["element_map"].get(nibo_id)
-    action_dict = {"type": "macro_click", "selector": selector} if selector else None
-    _update_recorder(res, action_dict)
     return res
 
 
@@ -235,9 +188,6 @@ async def type_text(nibo_id: str, text: str) -> dict:
         text: The text to type.
     """
     res = await _send_action("type", {"niboId": nibo_id, "text": text})
-    selector = _macro_recorder["element_map"].get(nibo_id)
-    action_dict = {"type": "macro_type", "selector": selector, "text": text} if selector else None
-    _update_recorder(res, action_dict)
     return res
 
 
@@ -252,7 +202,6 @@ async def press_key(key: str) -> dict:
         key: The key to press. Supported: Enter, Tab, Escape, Backspace, ArrowDown, ArrowUp.
     """
     res = await _send_action("press_key", {"key": key})
-    _update_recorder(res, {"type": "press_key", "key": key})
     return res
 
 
@@ -266,7 +215,6 @@ async def scroll_page(direction: str) -> dict:
         direction: Either "up" or "down".
     """
     res = await _send_action("scroll", {"direction": direction})
-    _update_recorder(res, {"type": "scroll", "direction": direction})
     return res
 
 
@@ -279,75 +227,7 @@ async def navigate_to_url(url: str) -> dict:
         url: Full URL (e.g. "https://google.com") or relative path (e.g. "/settings").
     """
     res = await _send_action("navigate", {"url": url})
-    _update_recorder(res, {"type": "navigate", "url": url})
     return res
-
-
-async def start_macro(goal: str) -> dict:
-    """Start recording a macro for a repeated task.
-    
-    Use this if the user asks you to 'remember' how to do something or if it's a routine task.
-    
-    Args:
-        goal: A clear name for this macro (e.g., "Check Gmail", "Play LoFi on YouTube").
-    """
-    _macro_recorder["recording"] = True
-    _macro_recorder["goal"] = goal
-    _macro_recorder["actions"] = []
-    _macro_recorder["element_map"] = {}
-    return {"success": True, "message": f"Macro recording started for: {goal}"}
-
-
-async def finish_macro(summary: str) -> dict:
-    """Stop recording and save the macro.
-    
-    Args:
-        summary: A quick summary of what the macro does.
-    """
-    if not _macro_recorder["recording"]:
-        return {"success": False, "error": "No macro recording in progress."}
-        
-    goal = _macro_recorder["goal"]
-    if _macro_recorder["actions"]:
-        macros = load_macros()
-        macros[goal] = _macro_recorder["actions"]
-        save_macros(macros)
-        print(f"💾 Macro saved for goal: '{goal}'")
-        
-    _macro_recorder["recording"] = False
-    return {"success": True, "message": f"Macro '{goal}' saved successfully. {summary}"}
-
-
-async def playback_macro(goal: str) -> dict:
-    """Execute a previously saved macro instantly.
-    
-    Args:
-        goal: The exact name of the macro to play.
-    """
-    macros = load_macros()
-    if goal not in macros:
-        return {"success": False, "error": f"Macro '{goal}' not found."}
-        
-    print(f"🚀 Playing macro: '{goal}'")
-    for action in macros[goal]:
-        action_type = action["type"]
-        params = {}
-        if action_type == "macro_click":
-            params = {"selector": action["selector"]}
-        elif action_type == "macro_type":
-            params = {"selector": action["selector"], "text": action["text"]}
-        elif action_type == "press_key":
-            params = {"key": action["key"]}
-        elif action_type == "scroll":
-            params = {"direction": action["direction"]}
-        elif action_type == "navigate":
-            params = {"url": action["url"]}
-            
-        res = await _send_action(action_type, params)
-        if not res.get("success"):
-            return {"success": False, "error": f"Macro failed at {action_type}: {res.get('error')}"}
-            
-    return {"success": True, "message": f"Macro '{goal}' executed successfully."}
 
 
 async def save_context(info: str) -> dict:
