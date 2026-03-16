@@ -182,17 +182,23 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         # Handle playback instructions injected from UI library
                         if action_id == "PLAYBACK" and "playback_instruction" in result:
                             instruction = result["playback_instruction"]
-                            print(f"▶️ Injecting conversational playback: {instruction[:50]}...")
+                            wf_name = result.get("workflowName", "this workflow")
+                            print(f"▶️ Injecting autonomous playback for: {wf_name}...")
+                            
                             conversational_prompt = f"""
-                            The user has just triggered a stored automation. 
+                            The user has just triggered a stored automation named: "{wf_name}". 
                             
-                            INSTRUCTIONS:
-                            1. Briefly acknowledge the task to the user (e.g., "Got it, I'll start [Task] for you now...").
-                            2. Access the content of the workflow below.
-                            3. Carry out the instructions naturally using your browser tools.
-                            4. Continue to be helpful and conversational throughout the process.
+                            VOICE OVERRIDE & AUTONOMOUS HANDOVER: 
+                            - Speak immediately to the user.
+                            - ACTIVATE AUTONOMOUS CHAINING.
                             
-                            WORKFLOW CONTENT:
+                            MISSION PROTOCOL:
+                            1. Briefly acknowledge the task out loud.
+                            2. VERBALIZE YOUR PLAN: State the steps you will take to complete "{wf_name}" before starting.
+                            3. START THE CHAIN: Begin the first tool call immediately after speaking.
+                            4. DO NOT STOP: Execute all steps to completion without pausing for user input.
+                            
+                            WORKFLOW STEPS TO EXECUTE:
                             {instruction}
                             """
                             content = types.Content(
