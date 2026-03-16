@@ -1,11 +1,9 @@
 # PLAN.md: Neural-Interface Browser Orchestrator (NIBO)
 
 # 1. Executive Summary
-Development of a client-side, browser extension leveraging **Gemini Flash Multimodal Live API** to execute Natural Language Driven (NLD) web automation. 
+Development of a distributed browser orchestration runtime leveraging the **Gemini 2.5 Flash Multimodal Live API** for real-time native audio intent parsing and DOM manipulation. 
 
-The system functions as a **Safe-Traversal Autopilot**, converting spoken instructions into reliable, repeatable web actions via a **One-Shot Heuristic Learning** engine. By "distilling" complex DOM structures into semantic landmarks, the system compiles user intent into **Voice-Actuated Macros** stored locally for instant execution.
-
-A dedicated **Ambient Instruction Guardian** monitors external audio (e.g., phone calls) via a real-time WebSocket pipeline to **Vertex AI**, filtering for malicious intent and social engineering before any local execution occurs.
+NIBO utilizes a **One-Shot Heuristic Engine** to serialize non-deterministic model outputs into stable, locally-persistent navigation primitives. Simultaneously, an **Ambient Instruction Guardian** monitors environmental telemetry via a real-time WebSocket pipeline to Vertex AI, providing out-of-band security intercepts and DOM-level mitigation for social engineering threats.
 
 ---
 
