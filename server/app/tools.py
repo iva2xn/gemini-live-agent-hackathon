@@ -266,3 +266,61 @@ async def save_context(info: str) -> dict:
     memory.append({"role": "user_context", "info": info, "timestamp": str(asyncio.get_event_loop().time())})
     save_memory(memory)
     return {"success": True, "message": "Context saved to persistent memory."}
+
+
+async def report_scam_risk(risk_score: int, reasoning: str, detected_scam_type: str) -> dict:
+    """Report a detected scam or risk from the audio conversation.
+    
+    Use this ONLY when you detect a potential scam or risk in the conversation.
+    The report will be shown to the user in the extension UI.
+    
+    Args:
+        risk_score: A number from 0-100 indicating the risk level. 100 is extreme risk.
+        reasoning: A short explanation of why this is considered a scam.
+        detected_scam_type: The type of scam (e.g., "Tech Support", "Bank Fraud", "Impersonation").
+    """
+    ws = _session_state["websocket"]
+    if not ws:
+        return {"success": False, "error": "WebSocket not connected."}
+        
+    await ws.send_text(json.dumps({
+        "type": "update_risk",
+        "action": "UPDATE_RISK",
+        "riskScore": risk_score,
+        "reasoning": reasoning,
+        "scamType": detected_scam_type,
+        "isAudioRisk": True
+    }))
+    
+    return {"success": True, "message": f"Scam risk of {risk_score} reported."}
+
+
+async def create_workflow(name: str, steps_markdown: str) -> dict:
+    """Create a new reusable workflow file from safe user instructions.
+    
+    Use this ONLY when you hear a user giving safe, clear instructions for a 
+    multi-step browser task (e.g. 'How to book a flight').
+    DO NOT create workflows for suspicious or high-risk tasks.
+    
+    Args:
+        name: A descriptive name for the workflow (e.g., "book_flight").
+        steps_markdown: The markdown content of the workflow steps.
+    """
+    try:
+        # Create workflows directory in project root if it doesn't exist
+        # Assuming project root is parent of server/
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        workflows_dir = os.path.join(root_dir, "workflows")
+        os.makedirs(workflows_dir, exist_ok=True)
+        
+        filename = f"{name.lower().replace(' ', '_')}.md"
+        file_path = os.path.join(workflows_dir, filename)
+        
+        with open(file_path, "w") as f:
+            f.write(f"---\ndescription: {name}\n---\n\n{steps_markdown}")
+            
+        print(f"📁 Workflow created: {file_path}")
+        return {"success": True, "message": f"Workflow {filename} created successfully."}
+    except Exception as e:
+        print(f"❌ Error creating workflow: {e}")
+        return {"success": False, "error": str(e)}

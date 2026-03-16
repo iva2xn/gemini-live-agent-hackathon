@@ -63,6 +63,24 @@ function setMode(mode) {
         btnText.innerText = mode === 'talk' ? 'Listen to Record' : 'Start Shielding';
     }
 
+    // Update Risk Header
+    const riskHeader = document.getElementById('riskHeader');
+    const loadingMessage = document.querySelector('#loadingState p');
+    const riskSection = document.getElementById('riskSection');
+    const loadingState = document.getElementById('loadingState');
+
+    // Reset UI to neutral state on mode switch
+    if (riskSection) riskSection.style.display = 'none';
+    if (loadingState) loadingState.style.display = 'block';
+
+    if (mode === 'talk') {
+        if (riskHeader) riskHeader.innerText = "Live Risk Detection";
+        if (loadingMessage) loadingMessage.innerText = "Live Risk Detection Active";
+    } else {
+        if (riskHeader) riskHeader.innerText = "Call Security Analysis";
+        if (loadingMessage) loadingMessage.innerText = "Shield Monitoring Active";
+    }
+
     console.log(`Mode switched to: ${mode}`);
 }
 
@@ -114,33 +132,48 @@ chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'UPDATE_RISK') {
         const loadingState = document.getElementById('loadingState');
         const riskSection = document.getElementById('riskSection');
-        const riskUrl = document.getElementById('riskUrl');
+        const riskHeader = document.getElementById('riskHeader');
+        const riskTitle = document.getElementById('riskTitle');
         const riskScoreBadge = document.getElementById('riskScoreBadge');
         const riskLevel = document.getElementById('riskLevel');
         const riskReasoning = document.getElementById('riskReasoning');
 
         if (!riskSection) return;
 
+        // CRITICAL: If in Shield Mode, ONLY show audio risks. 
+        // Ignore standard website scans from background.js
+        if (currentMode === 'shield' && !message.isAudioRisk) {
+            console.log("Shield Mode: Ignoring website risk scan.");
+            return;
+        }
+
         if (loadingState) loadingState.style.display = 'none';
         riskSection.style.display = 'block';
-        riskUrl.innerText = message.title || message.url;
+        
+        if (message.isAudioRisk) {
+            if (riskHeader) riskHeader.innerText = "Call Security Analysis";
+            if (riskTitle) riskTitle.innerText = message.scamType || "Potential Call Scam";
+        } else {
+            if (riskHeader) riskHeader.innerText = "Live Risk Detection";
+            if (riskTitle) riskTitle.innerText = message.title || message.url;
+        }
         riskScoreBadge.innerText = message.riskScore;
         riskReasoning.innerText = message.reasoning;
 
         // Apply styling based on score
         if (message.riskScore < 30) {
             riskScoreBadge.style.backgroundColor = 'var(--primary)'; 
-            riskLevel.innerText = "Safe Website";
+            riskLevel.innerText = message.isAudioRisk ? "Conversation Safe" : "Safe Website";
             riskLevel.style.color = 'var(--primary)';
             riskScoreBadge.style.animation = 'none';
         } else if (message.riskScore < 60) {
             riskScoreBadge.style.backgroundColor = '#f59e0b'; // Amber
-            riskLevel.innerText = "Moderate Risk";
+            riskLevel.innerText = message.isAudioRisk ? "Suspicious Activity" : "Moderate Risk";
             riskLevel.style.color = '#f59e0b';
             riskScoreBadge.style.animation = 'none';
         } else {
             riskScoreBadge.style.backgroundColor = '#ef4444'; // Red
-            riskLevel.innerText = "High Risk / Scam Detected!";
+            riskLevel.innerText = message.isAudioRisk ? "Scam Detected / Hang Up!" : "High Risk / Scam Detected!";
             riskLevel.style.color = '#ef4444';
             if (message.riskScore > 80) {
                 // Add CSS pulse if not present

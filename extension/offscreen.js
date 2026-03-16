@@ -110,6 +110,11 @@ async function startRecording(mode = 'talk') {
                 // Clean up finished sources
                 scheduledSources = [];
             }
+            // ── Relay high-level events (risk, etc.) ──
+            else if (message.type === 'update_risk') {
+                console.log("🔔 Risk update received from agent", message);
+                chrome.runtime.sendMessage(message);
+            }
             // ── Server is requesting a browser action ──
             else if (message.type === 'action') {
                 console.log(`Action requested: ${message.action_type}`, message);
