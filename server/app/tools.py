@@ -303,9 +303,39 @@ async def create_workflow(name: str, steps_markdown: str) -> dict:
     
     Args:
         name: A descriptive name (e.g., "gmail_reset").
-        steps_markdown: The markdown content of the workflow steps.
+        steps_markdown: The raw markdown content of the workflow steps.
     """
     try:
+        # 1. Use AI to clean up and improve the Markdown steps
+        client = genai.Client()
+        cleanup_prompt = f"""
+        Improve and polish the following browser automation steps to be professional, 
+        clear, and well-structured for an AI agent to execute.
+        
+        Rules:
+        - Convert muddled or verbal instructions into a clean, numbered list.
+        - Use direct, authoritative language (e.g., "1. Navigate to...", "2. Search for...").
+        - Remove verbal fillers, conversational chatter, or redundant corrections.
+        - Ensure the output is strictly Markdown.
+        
+        Task Intent: {name}
+        Raw Steps Overheard:
+        {steps_markdown}
+        
+        Return ONLY the polished Markdown steps. No chatter.
+        """
+        
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=cleanup_prompt,
+                config=types.GenerateContentConfig(temperature=0.2)
+            )
+            polished_markdown = response.text.strip()
+        except Exception as ai_err:
+            print(f"⚠️ MD Polishing AI failed: {ai_err}")
+            polished_markdown = steps_markdown
+
         # Create workflows directory in project root if it doesn't exist
         root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         workflows_dir = os.path.join(root_dir, "workflows")
@@ -319,12 +349,12 @@ async def create_workflow(name: str, steps_markdown: str) -> dict:
         exists = os.path.exists(file_path)
         mode = "a" if exists else "w"
         
-        with open(file_path, mode) as f:
+        with open(file_path, mode, encoding='utf-8') as f:
             if not exists:
                 f.write(f"---\ndescription: {name}\n---\n\n")
             else:
                 f.write(f"\n\n### Additional Steps (Chained)\n")
-            f.write(steps_markdown)
+            f.write(polished_markdown)
             
         print(f"📁 Workflow {'updated' if exists else 'created'}: {file_path}")
         return {"success": True, "message": f"Workflow {filename} {'appended' if exists else 'created'} successfully."}

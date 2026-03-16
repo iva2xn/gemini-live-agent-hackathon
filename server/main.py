@@ -182,9 +182,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         # Handle playback instructions injected from UI library
                         if action_id == "PLAYBACK" and "playback_instruction" in result:
                             instruction = result["playback_instruction"]
-                            print(f"▶️ Injecting instruction: {instruction[:50]}...")
+                            print(f"▶️ Injecting conversational playback: {instruction[:50]}...")
+                            conversational_prompt = f"""
+                            The user has just triggered a stored automation. 
+                            
+                            INSTRUCTIONS:
+                            1. Briefly acknowledge the task to the user (e.g., "Got it, I'll start [Task] for you now...").
+                            2. Access the content of the workflow below.
+                            3. Carry out the instructions naturally using your browser tools.
+                            4. Continue to be helpful and conversational throughout the process.
+                            
+                            WORKFLOW CONTENT:
+                            {instruction}
+                            """
                             content = types.Content(
-                                parts=[types.Part(text=f"SYSTEM: The user has requested that you carry out this task immediately:\n\n{instruction}")]
+                                parts=[types.Part(text=conversational_prompt.strip())]
                             )
                             live_request_queue.send_content(content)
                             continue
