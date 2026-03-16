@@ -4,7 +4,7 @@
 
     let niboIdCounter = 0;
     const NIBO_ATTR = "data-nibo-id";
-    const DOM_REFRESH_DELAY = 50; // ms to wait after an action before re-distilling
+    const DOM_REFRESH_DELAY = 1000; // ms to wait after an action before re-distilling
 
     const INTERACTIVE_SELECTORS = [
         "button",
