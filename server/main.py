@@ -35,6 +35,7 @@ from google import genai
 from google.genai import types
 
 from app.agent import root_agent
+from app.shield_agent import shield_agent
 from app.tools import (
     clear_websocket,
     is_audio_paused,
@@ -54,9 +55,15 @@ app = FastAPI(title="Autopilot Bridge ADK Server")
 
 session_service = InMemorySessionService()
 
-runner = Runner(
+talk_runner = Runner(
     app_name=APP_NAME,
     agent=root_agent,
+    session_service=session_service,
+)
+
+shield_runner = Runner(
+    app_name=APP_NAME,
+    agent=shield_agent,
     session_service=session_service,
 )
 
@@ -68,7 +75,13 @@ runner = Runner(
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
-    print("Chrome Extension Connected!")
+    
+    # Get mode from query parameters (e.g. ws://.../ws?mode=shield)
+    mode = websocket.query_params.get("mode", "talk")
+    print(f"Chrome Extension Connected! Mode: {mode}")
+
+    # Select the runner based on mode
+    active_runner = shield_runner if mode == "shield" else talk_runner
 
     # Register WebSocket so tool functions can send actions to the extension
     set_websocket(websocket)
@@ -175,7 +188,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     async def downstream_task() -> None:
         """Receives ADK Events from run_live() → sends to WebSocket."""
         try:
-            async for event in runner.run_live(
+            async for event in active_runner.run_live(
                 user_id=user_id,
                 session_id=session_id,
                 live_request_queue=live_request_queue,

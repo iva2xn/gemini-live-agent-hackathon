@@ -56,7 +56,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // ── Mic / Screenshot controls ──
     else if (message.action === 'START_RECORDING') {
         setupOffscreenDocument('offscreen.html').then(() => {
-            chrome.runtime.sendMessage({ action: 'OFFSCREEN_START_MIC' });
+            chrome.runtime.sendMessage({ 
+                action: 'OFFSCREEN_START_MIC',
+                mode: message.mode
+            });
         });
     }
     else if (message.action === 'STOP_RECORDING') {

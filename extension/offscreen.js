@@ -7,7 +7,7 @@ let outputGain; // GainNode to control Gemini's output volume (mute on barge-in)
 
 chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'OFFSCREEN_START_MIC') {
-        startRecording();
+        startRecording(message.mode);
     } else if (message.action === 'OFFSCREEN_STOP_MIC') {
         stopRecording();
     } else if (message.action === 'OFFSCREEN_SEND_SCREENSHOT') {
@@ -27,14 +27,16 @@ chrome.runtime.onMessage.addListener((message) => {
     }
 });
 
-async function startRecording() {
+async function startRecording(mode = 'talk') {
     // Prevent overlapping sessions
     if (ws || audioContext || mediaStream) {
         stopRecording();
     }
 
     // Connect to the ADK FastAPI WebSocket server on Cloud Run
-    ws = new WebSocket('wss://nibo-backend-512400763301.us-central1.run.app/ws');
+    // Append mode to query params
+    const wsUrl = `wss://nibo-backend-512400763301.us-central1.run.app/ws?mode=${mode}`;
+    ws = new WebSocket(wsUrl);
 
     ws.onopen = async () => {
         console.log("WebSocket connected to ADK Server");

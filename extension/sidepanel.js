@@ -6,8 +6,12 @@ const stopBtn = document.getElementById('stopBtn');
 const btnText = document.getElementById('btnText');
 const recordingLabel = document.getElementById('recordingLabel');
 const statusIcon = document.getElementById('statusIcon');
+const talkModeBtn = document.getElementById('talkModeBtn');
+const shieldModeBtn = document.getElementById('shieldModeBtn');
+
 // State
 let isRecording = false;
+let currentMode = 'talk'; // 'talk' or 'shield'
 
 // DOM Elements Settings
 const settingsBtn = document.getElementById('settingsBtn');
@@ -32,7 +36,35 @@ document.addEventListener('DOMContentLoaded', () => {
             settingsView.style.display = 'none';
         });
     }
+
+    // Mode Toggle Logic
+    if (talkModeBtn && shieldModeBtn) {
+        talkModeBtn.addEventListener('click', () => setMode('talk'));
+        shieldModeBtn.addEventListener('click', () => setMode('shield'));
+    }
 });
+
+function setMode(mode) {
+    if (currentMode === mode) return;
+
+    // If recording, stop it first to reset microphone/WS
+    if (isRecording) {
+        if (stopBtn) stopBtn.click();
+    }
+
+    currentMode = mode;
+
+    // Update UI
+    if (talkModeBtn) talkModeBtn.classList.toggle('active', mode === 'talk');
+    if (shieldModeBtn) shieldModeBtn.classList.toggle('active', mode === 'shield');
+    
+    // Update button text context
+    if (btnText) {
+        btnText.innerText = mode === 'talk' ? 'Listen to Record' : 'Start Shielding';
+    }
+
+    console.log(`Mode switched to: ${mode}`);
+}
 
 
 // ════════════════════════════════════════
@@ -44,7 +76,10 @@ if (startBtn) {
         try {
             const perm = await navigator.permissions.query({ name: 'microphone' });
             if (perm.state === 'granted') {
-                chrome.runtime.sendMessage({ action: 'START_RECORDING' });
+                chrome.runtime.sendMessage({ 
+                    action: 'START_RECORDING',
+                    mode: currentMode 
+                });
                 setUIState(true);
             } else {
                 chrome.tabs.create({ url: chrome.runtime.getURL('permission.html') });
