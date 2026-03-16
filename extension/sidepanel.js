@@ -292,31 +292,46 @@ async function playWorkflow(filename) {
         const data = await res.json();
         if (data.error) throw new Error(data.error);
 
-        // 2. Switch to Talk Mode if not already
+        // 2. Find description from UI to pass as workflow name
+        let workflowName = "this workflow";
+        const allItems = workflowsList.querySelectorAll('div');
+        for (const item of allItems) {
+            if (item.querySelector(`button[data-file="${filename}"]`)) {
+                const titleDiv = item.querySelector('div[style*="font-weight: 600"]');
+                if (titleDiv) workflowName = titleDiv.innerText;
+                break;
+            }
+        }
+
+        // 3. Switch to Talk Mode if not already
         if (currentMode !== 'talk') {
             setMode('talk');
         }
 
-        // 3. Start recording if not already
+        // 4. Start recording if not already
         if (!isRecording) {
             chrome.runtime.sendMessage({ 
-                action: 'START_RECORDING',
-                mode: 'talk' 
+                action: 'START_RECORDING', 
+                mode: currentMode 
             });
             setUIState(true);
             // Give WS a moment to connect
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        // 4. Send instructions to offscreen -> WebSocket
+        // 5. Send instructions to offscreen -> WebSocket
         chrome.runtime.sendMessage({ 
             action: 'OFFSCREEN_ACTION_RESULT', 
             actionId: 'PLAYBACK', // Special ID for UI-triggered instructions
-            result: { success: true, playback_instruction: data.content }
+            result: { 
+                success: true, 
+                playback_instruction: data.content,
+                workflowName: workflowName
+            }
         });
 
         workflowsView.style.display = 'none';
-        console.log(`▶️ Playing workflow: ${filename}`);
+        console.log(`▶️ Playing workflow: ${filename} (${workflowName})`);
     } catch (err) {
         alert("Failed to play instruction: " + err.message);
     }
