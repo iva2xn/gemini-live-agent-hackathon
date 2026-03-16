@@ -32,5 +32,16 @@
             ],
             "run_at": "document_idle"
         }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "sidepanel.html",
+                "sidepanel.js"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        }
     ]
 }

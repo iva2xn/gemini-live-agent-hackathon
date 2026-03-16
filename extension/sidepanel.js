@@ -9,12 +9,29 @@ const statusIcon = document.getElementById('statusIcon');
 // State
 let isRecording = false;
 
+// DOM Elements Settings
+const settingsBtn = document.getElementById('settingsBtn');
+const backBtn = document.getElementById('backBtn');
+const settingsView = document.getElementById('settingsView');
+
 // ════════════════════════════════════════
 // Initialization
 // ════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log("NIBO Macro Suite Initialized");
+
+    if (settingsBtn && settingsView) {
+        settingsBtn.addEventListener('click', () => {
+            settingsView.style.display = 'block';
+        });
+    }
+
+    if (backBtn && settingsView) {
+        backBtn.addEventListener('click', () => {
+            settingsView.style.display = 'none';
+        });
+    }
 });
 
 
@@ -102,6 +119,10 @@ chrome.runtime.onMessage.addListener((message) => {
             } else {
                 riskScoreBadge.style.animation = 'none';
             }
+        }
+    } else if (message.action === 'TRIGGER_AUTO_RECORD') {
+        if (startBtn && !isRecording) {
+            startBtn.click();
         }
     }
 });

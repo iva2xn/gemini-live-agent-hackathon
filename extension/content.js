@@ -485,5 +485,216 @@
 
 
 
+    // ==========================================
+    // FLOATING BUBBLE (NIBO Trigger)
+    // ==========================================
+    function injectNiboUI() {
+        if (document.getElementById("nibo-bubble-host")) return;
+
+        const host = document.createElement("div");
+        host.id = "nibo-bubble-host";
+        document.body.appendChild(host);
+
+        const shadow = host.attachShadow({ mode: "open" });
+
+        const styles = `
+            :host {
+                all: initial;
+            }
+            #bubble-container {
+                position: fixed;
+                bottom: 24px;
+                right: 24px;
+                z-index: 2147483647;
+                display: flex;
+                flex-direction: column;
+                align-items: flex-end;
+                pointer-events: none;
+                transition: transform 0.1s ease-out;
+            }
+            #bubble-container.snapping {
+                transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+            }
+            #bubble {
+                width: 56px;
+                height: 56px;
+                border-radius: 50%;
+                background: #0052ff;
+                box-shadow: 0 4px 12px rgba(0, 82, 255, 0.3), 
+                            0 8px 14px rgba(0, 0, 0, 0.1);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: grab;
+                transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.3s ease;
+                border: 2px solid rgba(255, 255, 255, 0.2);
+                padding: 0;
+                pointer-events: auto;
+                user-select: none;
+                -webkit-user-drag: none;
+            }
+            #bubble:active {
+                cursor: grabbing;
+            }
+            #bubble:hover {
+                transform: scale(1.05);
+            }
+            svg {
+                width: 28px;
+                height: 28px;
+                fill: white;
+            }
+            .tooltip {
+                position: absolute;
+                bottom: 100%;
+                right: 0;
+                margin-bottom: 12px;
+                background: #1e1e2e;
+                color: white;
+                padding: 8px 14px;
+                border-radius: 10px;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                font-size: 13px;
+                font-weight: 500;
+                white-space: nowrap;
+                opacity: 0;
+                visibility: hidden;
+                transition: all 0.2s ease;
+                transform: translateY(10px);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            }
+            #bubble:hover:not(.dragging) + .tooltip {
+                opacity: 1;
+                visibility: visible;
+                transform: translateY(0);
+            }
+        `;
+
+        const html = `
+            <div id="bubble-container">
+                <div id="bubble" aria-label="Toggle NIBO">
+                    <svg viewBox="0 0 24 24" id="bubble-icon">
+                        <path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12C4,14.39 5.05,16.53 6.71,18L9.59,15.12C8.59,14.4 8,13.26 8,12A4,4 0 0,1 12,8A4,4 0 0,1 16,12C16,13.26 15.41,14.4 14.41,15.12L17.29,18C18.95,16.53 20,14.39 20,12A8,8 0 0,0 12,4M12,10A2,2 0 0,0 10,12A2,2 0 0,0 12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10Z" />
+                    </svg>
+                </div>
+                <div class="tooltip">Toggle NIBO Side Panel</div>
+            </div>
+        `;
+
+        const styleTag = document.createElement("style");
+        styleTag.textContent = styles;
+        shadow.appendChild(styleTag);
+
+        const container = document.createElement("div");
+        container.innerHTML = html;
+        shadow.appendChild(container);
+
+        const bubble = shadow.getElementById("bubble");
+        const bubbleContainer = shadow.getElementById("bubble-container");
+
+        let isDragging = false;
+        let startX, startY;
+        let currentX = 0, currentY = 0;
+        let dragThreshold = 5;
+
+        function toggle() {
+             chrome.runtime.sendMessage({ action: "TOGGLE_SIDE_PANEL" });
+        }
+
+        // ==========================================
+        // DRAG & SNAP LOGIC
+        // ==========================================
+        function onMouseDown(e) {
+            startX = e.clientX - currentX;
+            startY = e.clientY - currentY;
+            isDragging = false;
+            bubbleContainer.classList.remove("snapping");
+
+            document.addEventListener("mousemove", onMouseMove);
+            document.addEventListener("mouseup", onMouseUp);
+        }
+
+        function onMouseMove(e) {
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+
+            if (!isDragging && (Math.abs(deltaX - currentX) > dragThreshold || Math.abs(deltaY - currentY) > dragThreshold)) {
+                isDragging = true;
+                bubble.classList.add("dragging");
+            }
+
+            if (isDragging) {
+                currentX = deltaX;
+                currentY = deltaY;
+                bubbleContainer.style.transform = `translate(${currentX}px, ${currentY}px)`;
+            }
+        }
+
+        function onMouseUp() {
+            document.removeEventListener("mousemove", onMouseMove);
+            document.removeEventListener("mouseup", onMouseUp);
+
+            if (!isDragging) {
+                toggle();
+            } else {
+                snapToEdge();
+            }
+            
+            setTimeout(() => {
+                bubble.classList.remove("dragging");
+                isDragging = false;
+            }, 50);
+        }
+
+        function snapToEdge() {
+            bubbleContainer.classList.add("snapping");
+            
+            const rect = bubble.getBoundingClientRect();
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight;
+            const margin = 24;
+
+            const isLeft = (rect.left + rect.width / 2) < (screenWidth / 2);
+            const initialXRight = screenWidth - margin - rect.width;
+            const targetX = isLeft ? -(initialXRight - margin) : 0;
+            
+            const initialYBottom = screenHeight - margin - rect.height;
+            const bubbleTop = rect.top;
+            const bubbleBottom = rect.bottom;
+            
+            let targetY = currentY;
+            if (bubbleTop < margin) targetY = -(initialYBottom - margin);
+            if (bubbleBottom > screenHeight - margin) targetY = 0;
+
+            currentX = targetX;
+            currentY = targetY;
+            bubbleContainer.style.transform = `translate(${currentX}px, ${currentY}px)`;
+        }
+
+        bubble.addEventListener("mousedown", onMouseDown);
+
+        window.addEventListener("resize", () => {
+            if (currentX !== 0) snapToEdge();
+        });
+
+        // ==========================================
+        // KEYBOARD SHORTCUTS
+        // ==========================================
+        document.addEventListener("keydown", (e) => {
+            // Only trigger if not in an input, textarea, or contenteditable
+            const target = e.target;
+            const isTyping = target.tagName === "INPUT" || 
+                             target.tagName === "TEXTAREA" || 
+                             target.isContentEditable;
+
+            if (e.key === "/" && !isTyping) {
+                e.preventDefault();
+                chrome.runtime.sendMessage({ action: "OPEN_AND_START_RECORDING" });
+            }
+        });
+    }
+
+    injectNiboUI();
+
     console.log("🤖 NIBO Content Script loaded");
 })();
