@@ -212,6 +212,9 @@
         </div>
         <div style="display: flex; align-items: center; gap: 12px;">
             <div id="recordingLabel" style="font-size: 12px; font-weight: 600; color: #ef4444; display: none;">REC</div>
+            <button id="playLibraryBtn" style="background: none; border: none; cursor: pointer; color: var(--muted-foreground); display: flex; align-items: center; justify-content: center; padding: 4px; border-radius: 6px; transition: all 0.2s;" title="Instruction Library">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
             <button id="settingsBtn" style="background: none; border: none; cursor: pointer; color: var(--muted-foreground); display: flex; align-items: center; justify-content: center; padding: 4px; border-radius: 6px; transition: all 0.2s;">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
@@ -285,6 +288,22 @@
             </svg>
         </button>
     </footer>
+
+    <!-- Workflows Library View (Playable Instructions) -->
+    <div id="workflowsView" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: white; z-index: 100; overflow-y: auto; padding: 20px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;">
+            <button id="closeWorkflowsBtn" style="background: none; border: none; cursor: pointer; color: var(--primary); font-weight: 600; display: flex; align-items: center; gap: 4px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5m7 7-7-7 7-7"/></svg>
+                Back
+            </button>
+            <h2 style="font-size: 16px; font-weight: 700; margin: 0;">Instruction Library</h2>
+            <div style="width: 40px;"></div>
+        </div>
+        
+        <div id="workflowsList" style="display: flex; flex-direction: column; gap: 12px;">
+            <!-- Workflow items will be injected here -->
+        </div>
+    </div>
 
     <script src="sidepanel.js"></script>
 </body>

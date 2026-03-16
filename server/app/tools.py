@@ -296,31 +296,38 @@ async def report_scam_risk(risk_score: int, reasoning: str, detected_scam_type: 
 
 
 async def create_workflow(name: str, steps_markdown: str) -> dict:
-    """Create a new reusable workflow file from safe user instructions.
+    """Create or update a reusable workflow file from safe user instructions.
     
-    Use this ONLY when you hear a user giving safe, clear instructions for a 
-    multi-step browser task (e.g. 'How to book a flight').
-    DO NOT create workflows for suspicious or high-risk tasks.
+    If a workflow with the same name already exists, the new steps will be 
+    appended to it to create a cohesive multi-step workflow.
     
     Args:
-        name: A descriptive name for the workflow (e.g., "book_flight").
+        name: A descriptive name (e.g., "gmail_reset").
         steps_markdown: The markdown content of the workflow steps.
     """
     try:
         # Create workflows directory in project root if it doesn't exist
-        # Assuming project root is parent of server/
         root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         workflows_dir = os.path.join(root_dir, "workflows")
         os.makedirs(workflows_dir, exist_ok=True)
         
-        filename = f"{name.lower().replace(' ', '_')}.md"
+        # Normalize name for filename
+        safe_name = name.lower().replace(' ', '_')
+        filename = f"{safe_name}.md"
         file_path = os.path.join(workflows_dir, filename)
         
-        with open(file_path, "w") as f:
-            f.write(f"---\ndescription: {name}\n---\n\n{steps_markdown}")
+        exists = os.path.exists(file_path)
+        mode = "a" if exists else "w"
+        
+        with open(file_path, mode) as f:
+            if not exists:
+                f.write(f"---\ndescription: {name}\n---\n\n")
+            else:
+                f.write(f"\n\n### Additional Steps (Chained)\n")
+            f.write(steps_markdown)
             
-        print(f"📁 Workflow created: {file_path}")
-        return {"success": True, "message": f"Workflow {filename} created successfully."}
+        print(f"📁 Workflow {'updated' if exists else 'created'}: {file_path}")
+        return {"success": True, "message": f"Workflow {filename} {'appended' if exists else 'created'} successfully."}
     except Exception as e:
-        print(f"❌ Error creating workflow: {e}")
+        print(f"❌ Error managing workflow: {e}")
         return {"success": False, "error": str(e)}

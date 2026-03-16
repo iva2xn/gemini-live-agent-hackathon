@@ -26,6 +26,8 @@ import uuid
 
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import os
+import glob
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
@@ -176,6 +178,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         # Extension completed a tool action — resolve the pending future
                         action_id = data.get("actionId")
                         result = data.get("result", {})
+
+                        # Handle playback instructions injected from UI library
+                        if action_id == "PLAYBACK" and "playback_instruction" in result:
+                            instruction = result["playback_instruction"]
+                            print(f"▶️ Injecting instruction: {instruction[:50]}...")
+                            content = types.Content(
+                                parts=[types.Part(text=f"SYSTEM: The user has requested that you carry out this task immediately:\n\n{instruction}")]
+                            )
+                            live_request_queue.send_content(content)
+                            continue
+
                         if action_id:
                             resolve_action(action_id, result)
                             print(f"✅ Action {action_id} resolved: {result.get('success')}")
@@ -292,6 +305,73 @@ async def scan_page(req: ScanRequest):
     except Exception as e:
         print(f"Scan error: {e}")
         return {"risk_score": 0, "reasoning": f"Failed to analyze risk: {e}"}
+
+
+@app.get("/api/workflows")
+async def list_workflows():
+    """List all saved instruction files in the workflows directory."""
+    try:
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        workflows_dir = os.path.join(root_dir, "workflows")
+        if not os.path.exists(workflows_dir):
+            return {"workflows": []}
+            
+        files = glob.glob(os.path.join(workflows_dir, "*.md"))
+        workflow_list = []
+        for f in files:
+            name = os.path.basename(f)
+            # Try to read the description from frontmatter
+            desc = name
+            try:
+                with open(f, 'r', encoding='utf-8') as wf:
+                    content = wf.read()
+                    if content.startswith('---'):
+                        parts = content.split('---', 2)
+                        if len(parts) >= 3:
+                            for line in parts[1].split('\n'):
+                                if line.startswith('description:'):
+                                    desc = line.split(':', 1)[1].strip()
+            except:
+                pass
+            workflow_list.append({"filename": name, "description": desc})
+        
+        return {"workflows": workflow_list}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/workflows/{filename}")
+async def get_workflow(filename: str):
+    """Read specific workflow content."""
+    try:
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        file_path = os.path.join(root_dir, "workflows", filename)
+        if not os.path.exists(file_path):
+            return {"error": "Not found"}
+            
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            # Remove frontmatter if present
+            if content.startswith('---'):
+                parts = content.split('---', 2)
+                if len(parts) >= 3:
+                    content = parts[2].strip()
+            
+        return {"content": content}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.delete("/api/workflows/{filename}")
+async def delete_workflow(filename: str):
+    """Delete a workflow file."""
+    try:
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        file_path = os.path.join(root_dir, "workflows", filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return {"success": True}
+        return {"error": "File not found"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 if __name__ == "__main__":
